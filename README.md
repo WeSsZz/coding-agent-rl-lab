@@ -10,7 +10,7 @@ Coding Task → Isolated Environment → Agent Rollout
             → Policy Update → Held-out Evaluation
 ```
 
-## 当前阶段：M0 环境与评测基线
+## 当前阶段：M1 真实环境接入边界
 
 当前版本不训练模型，也不宣称已经实现 Agentic RL。它先固定训练系统最容易被忽略的基础合同：
 
@@ -24,6 +24,17 @@ Coding Task → Isolated Environment → Agent Rollout
 - 多次 Trial、`pass@1`、`pass^3` 和 fully-reliable task rate。
 
 `reference` 策略包含答案，只用于验证 environment/trajectory/verifier 管线，不能作为模型效果或训练基线。
+
+M1 已新增：
+
+- SWE-Gym/SWE-bench 任务字段适配，兼容 `instance_id`、`repo`、`base_commit`、`problem_statement`、`FAIL_TO_PASS` 和 `PASS_TO_PASS`；
+- policy 输入与隐藏 `test_patch`/verifier 数据隔离；
+- 官方 prediction JSONL 格式与 `swebench.harness.run_evaluation` 命令规划；
+- Docker sandbox provider：禁网、drop capabilities、只读根文件系统、资源限制和固定镜像版本；
+- OpenAI-compatible 模型 Coding Policy，严格输出单步 JSON tool action；
+- 模型错误作为 policy violation fail-closed，不中断完整评测报告。
+
+当前机器没有 Docker，也未配置模型 API key，因此真实 SWE-Gym 容器和模型 rollout 尚未执行。准确验证状态见 [`VALIDATION.md`](VALIDATION.md)。
 
 ## 快速运行
 
@@ -51,6 +62,38 @@ PYTHONPATH=src python -m coding_agent_rl_lab evaluate \
   --trajectories work/reference-trajectories.jsonl
 ```
 
+运行真实 OpenAI-compatible 模型策略：
+
+```bash
+export CODING_AGENT_API_KEY="..."
+
+PYTHONPATH=src python -m coding_agent_rl_lab evaluate \
+  --policy model \
+  --base-url https://your-provider.example/v1 \
+  --model your-model \
+  --repetitions 1 \
+  --output work/model-report.json \
+  --trajectories work/model-trajectories.jsonl
+```
+
+API key 只从环境变量读取，不写入 manifest、trajectory 或 Git。
+
+验证下载后的 SWE-Gym JSONL 并生成官方 harness 命令：
+
+```bash
+PYTHONPATH=src python -m coding_agent_rl_lab swe-plan \
+  --instances-jsonl /path/to/swe-gym-subset.jsonl \
+  --dataset-name SWE-Gym/SWE-Gym \
+  --predictions work/predictions.jsonl \
+  --run-id development-smoke
+```
+
+检查 Docker：
+
+```bash
+PYTHONPATH=src python -m coding_agent_rl_lab docker-check
+```
+
 运行测试：
 
 ```bash
@@ -67,7 +110,9 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 - 文件访问限制在临时 workspace 内；
 - 限制步骤、输出大小和测试超时。
 
-接入 SWE-Gym 或其他外部任务前必须增加 Docker/远程 sandbox provider，不能直接在宿主机执行任意数据集命令。
+运行 SWE-Gym 或其他外部任务时必须使用 Docker/远程 sandbox provider，不能直接在宿主机执行任意数据集命令。
+
+项目已经提供 Docker provider，但仍要求使用者预先安装 Docker、拉取固定 tag/digest 镜像，并通过 `docker-check`。SWE-Gym 最终 resolved 指标委托给官方 SWE-bench harness，不在本项目中重新实现评分规则。
 
 ## 与 Durable Agent Runtime 的边界
 
@@ -85,4 +130,3 @@ durable-agent-runtime       coding-agent-rl-lab
 未来可通过 `trajectory-v1.jsonl` 和 `policy-manifest-v1.json` 对接，但任何一方都不依赖另一方才能运行。
 
 完整路线见 [`PROJECT_PLAN.md`](PROJECT_PLAN.md)。
-

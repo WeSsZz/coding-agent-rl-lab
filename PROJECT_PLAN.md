@@ -24,8 +24,12 @@
 
 ### M1：SWE-Gym Adapter
 
-- 读取 SWE-Gym task metadata；
-- Docker sandbox provider；
+- [x] 读取并校验 SWE-Gym/SWE-bench task metadata；
+- [x] 输出官方 prediction JSONL 与 harness 命令；
+- [x] Docker sandbox provider 与资源/网络/权限边界；
+- [x] OpenAI-compatible 模型 Coding Policy；
+- [ ] 在安装 Docker 的机器上完成真实容器 smoke；
+- [ ] 使用真实模型完成无答案泄漏 rollout；
 - fail-before/pass-after 验证；
 - 50 条 development、20 条 regression、20 条 held-out smoke subset；
 - 接入一个现成轻量 Coding Agent。
@@ -63,4 +67,3 @@
 - 报告 resolve rate、回归率、成本、方差和失败类型；
 - 提升不是由答案泄漏、测试泄漏或增加推理预算造成；
 - 保存可复现配置、trajectory schema、policy manifest 和报告。
-

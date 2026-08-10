@@ -1,0 +1,2 @@
+{"task_id":"off-by-one-inclusive-range","actions":[{"kind":"list_files"},{"kind":"read_file","arguments":{"path":"calculator.py"}},{"kind":"replace_text","arguments":{"path":"calculator.py","old":"return list(range(start, end))","new":"return list(range(start, end + 1))"}},{"kind":"run_tests"}]}
+{"task_id":"clamp-negative-values","actions":[{"kind":"list_files"},{"kind":"read_file","arguments":{"path":"values.py"}},{"kind":"replace_text","arguments":{"path":"values.py","old":"return value","new":"return max(0, value)"}},{"kind":"run_tests"}]}

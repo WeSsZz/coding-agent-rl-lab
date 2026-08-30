@@ -5,7 +5,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from .contracts import CodingTask, RewardVector, Trajectory, TrajectoryStep
+from .contracts import ActionKind, AgentAction, CodingTask, RewardVector, Trajectory, TrajectoryStep
+from .dataset import build_trajectory_dataset_audit
 from .environment import LocalFixtureEnvironment
 from .policies import Policy
 
@@ -24,7 +25,21 @@ class RolloutCollector:
             environment.reset(task)
             baseline_passed = bool(environment.baseline_result and environment.baseline_result.passed)
             while len(steps) < task.max_steps:
-                action = policy.next_action(task, steps)
+                try:
+                    action = policy.next_action(task, steps)
+                except Exception as exc:
+                    violation = f"policy_error:{type(exc).__name__}"
+                    environment.violations.append(violation)
+                    steps.append(
+                        TrajectoryStep(
+                            sequence=len(steps) + 1,
+                            action=AgentAction(ActionKind.FINISH),
+                            observation=f"Policy failed closed: {type(exc).__name__}: {str(exc)[:1000]}",
+                            terminated=True,
+                            violation=violation,
+                        )
+                    )
+                    break
                 result = environment.step(action)
                 steps.append(
                     TrajectoryStep(
@@ -56,6 +71,10 @@ class RolloutCollector:
                 repetition=repetition,
                 seed=seed,
                 policy=policy.manifest,
+                execution=environment.execution_manifest,
+                task_split=task.split,
+                task_provenance=task.provenance,
+                task_base_commit=task.base_commit,
                 steps=tuple(steps),
                 reward=reward,
                 changed_files=changed_files,
@@ -88,9 +107,10 @@ def build_report(
             "longest_success_streak": _longest_streak(outcomes),
         }
     successes = [trajectory.reward.task_success for trajectory in trajectories]
+    dataset_audit = build_trajectory_dataset_audit(tasks, trajectories)
     return {
         "schema_version": 1,
-        "project_stage": "m0_environment_no_training",
+        "project_stage": "m1_adapter_no_training",
         "policy": trajectories[0].policy.__dict__ if trajectories else None,
         "task_count": len(tasks),
         "repetitions": repetitions,
@@ -107,6 +127,7 @@ def build_report(
         ) if trajectories else 0.0,
         "violation_count": sum(len(item.reward.violations) for item in trajectories),
         "task_reliability": case_reliability,
+        "trajectory_dataset": dataset_audit,
         "training_performed": False,
     }
 
@@ -131,4 +152,3 @@ def _longest_streak(values: list[bool]) -> int:
         current = current + 1 if value else 0
         best = max(best, current)
     return best
-

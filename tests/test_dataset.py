@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
-from coding_agent_rl_lab.dataset import DatasetError, load_tasks
+from coding_agent_rl_lab.contracts import DatasetSplit
+from coding_agent_rl_lab.dataset import DatasetError, build_trajectory_dataset_audit, load_tasks
 
 
 class DatasetTests(unittest.TestCase):
@@ -26,6 +28,18 @@ class DatasetTests(unittest.TestCase):
             path.write_text(f"{row}\n{row}\n", encoding="utf-8")
             with self.assertRaises(DatasetError):
                 load_tasks(path)
+
+    def test_same_repository_snapshot_cannot_cross_splits(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        development_task = load_tasks(root / "datasets" / "development" / "tasks.jsonl")[0]
+        held_out_copy = replace(
+            development_task,
+            task_id="held-out-copy",
+            split=DatasetSplit.HELD_OUT,
+        )
+        audit = build_trajectory_dataset_audit((development_task, held_out_copy), ())
+        self.assertFalse(audit["integrity_ok"])
+        self.assertEqual(len(audit["split_leakage"]), 1)
 
 
 if __name__ == "__main__":

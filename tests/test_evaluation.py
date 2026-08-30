@@ -18,6 +18,10 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(report["pass_at_1"], 0.0)
         self.assertFalse(report["training_performed"])
         self.assertTrue(all(not item.reward.task_success for item in trajectories))
+        audit = report["trajectory_dataset"]
+        self.assertTrue(audit["integrity_ok"])
+        self.assertEqual(audit["training_eligible_count"], 0)
+        self.assertEqual(audit["failure_taxonomy"], {"tests_failed_without_patch": 2})
 
     def test_reference_pipeline_is_reliable_across_three_trials(self) -> None:
         report, trajectories = evaluate(self.root, policy_name="reference", repetitions=3)
@@ -27,6 +31,11 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(report["fully_reliable_task_rate"], 1.0)
         self.assertEqual(report["policy"]["metadata"]["contains_answers"], True)
         self.assertTrue(all(item.changed_files for item in trajectories))
+        audit = report["trajectory_dataset"]
+        self.assertEqual(audit["answer_bearing_count"], 6)
+        self.assertEqual(audit["training_eligible_count"], 0)
+        self.assertEqual(audit["duplicate_content_groups"], 2)
+        self.assertEqual(audit["duplicate_content_records"], 4)
 
     def test_outputs_are_json_serializable(self) -> None:
         report, trajectories = evaluate(self.root, policy_name="reference", repetitions=1)
@@ -40,6 +49,9 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(loaded["schema_version"], 1)
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["schema_version"], 1)
+        self.assertEqual(rows[0]["task_split"], "development")
+        self.assertEqual(rows[0]["task_provenance"], "repository_owned_fixture")
+        self.assertEqual(rows[0]["execution"]["verifier_id"], "local-python-verifier")
 
 
 if __name__ == "__main__":

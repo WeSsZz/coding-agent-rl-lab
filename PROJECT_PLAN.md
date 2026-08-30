@@ -36,10 +36,10 @@
 
 ### M2：Trajectory Dataset
 
-- 采集成功和失败轨迹；
-- 记录模型、prompt、tool、sandbox 和 verifier 版本；
-- 去重、脱敏、许可与 provenance；
-- failure taxonomy 与人工抽检。
+- [x] 采集成功和失败轨迹；
+- [x] 记录模型、prompt、tool、sandbox 和 verifier 版本；
+- [ ] 去重、脱敏、许可与 provenance（已实现重复检测与 provenance 审计，待真实数据许可检查）；
+- [ ] failure taxonomy 与人工抽检（已实现自动分类，待真实轨迹抽检）。
 
 ### M3：Policy Optimization Baselines
 

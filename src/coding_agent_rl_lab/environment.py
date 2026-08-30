@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .contracts import ActionKind, AgentAction, CodingTask, StepResult, TestResult
+from .contracts import ActionKind, AgentAction, CodingTask, ExecutionManifest, StepResult, TestResult
 from .verifier import LocalPythonVerifier
 
 
@@ -29,6 +29,18 @@ class LocalFixtureEnvironment:
         self.tool_calls = 0
         self.violations: list[str] = []
         self._initial_hashes: dict[str, str] = {}
+
+    @property
+    def execution_manifest(self) -> ExecutionManifest:
+        return ExecutionManifest(
+            environment_id="local-fixture-environment",
+            environment_version="1",
+            verifier_id="local-python-verifier",
+            verifier_version="1",
+            sandbox_provider="trusted-fixture-tempdir",
+            sandbox_version="1",
+            tool_contract="coding-action-v1",
+        )
 
     def reset(self, task: CodingTask) -> str:
         self.close()

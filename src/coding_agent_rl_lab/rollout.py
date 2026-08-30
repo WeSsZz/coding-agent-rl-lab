@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .contracts import ActionKind, AgentAction, CodingTask, RewardVector, Trajectory, TrajectoryStep
+from .dataset import build_trajectory_dataset_audit
 from .environment import LocalFixtureEnvironment
 from .policies import Policy
 
@@ -70,6 +71,10 @@ class RolloutCollector:
                 repetition=repetition,
                 seed=seed,
                 policy=policy.manifest,
+                execution=environment.execution_manifest,
+                task_split=task.split,
+                task_provenance=task.provenance,
+                task_base_commit=task.base_commit,
                 steps=tuple(steps),
                 reward=reward,
                 changed_files=changed_files,
@@ -102,6 +107,7 @@ def build_report(
             "longest_success_streak": _longest_streak(outcomes),
         }
     successes = [trajectory.reward.task_success for trajectory in trajectories]
+    dataset_audit = build_trajectory_dataset_audit(tasks, trajectories)
     return {
         "schema_version": 1,
         "project_stage": "m1_adapter_no_training",
@@ -121,6 +127,7 @@ def build_report(
         ) if trajectories else 0.0,
         "violation_count": sum(len(item.reward.violations) for item in trajectories),
         "task_reliability": case_reliability,
+        "trajectory_dataset": dataset_audit,
         "training_performed": False,
     }
 

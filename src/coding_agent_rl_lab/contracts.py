@@ -120,12 +120,29 @@ class PolicyManifest:
 
 
 @dataclass(frozen=True)
+class ExecutionManifest:
+    """Versioned runtime identity needed to reproduce or audit a trajectory."""
+
+    environment_id: str
+    environment_version: str
+    verifier_id: str
+    verifier_version: str
+    sandbox_provider: str
+    sandbox_version: str
+    tool_contract: str
+
+
+@dataclass(frozen=True)
 class Trajectory:
     trajectory_id: str
     task_id: str
     repetition: int
     seed: int
     policy: PolicyManifest
+    execution: ExecutionManifest
+    task_split: DatasetSplit
+    task_provenance: str
+    task_base_commit: str
     steps: tuple[TrajectoryStep, ...]
     reward: RewardVector
     changed_files: tuple[str, ...]
@@ -135,6 +152,7 @@ class Trajectory:
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
+        payload["task_split"] = payload["task_split"].value
         for step in payload["steps"]:
             step["action"]["kind"] = step["action"]["kind"].value
         return payload

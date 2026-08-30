@@ -40,6 +40,8 @@ class ModelPolicyTests(unittest.TestCase):
         self.assertEqual(action.kind, ActionKind.LIST_FILES)
         self.assertIn(task.issue, model.user_prompt)
         self.assertNotIn("reference_actions", model.user_prompt)
+        self.assertEqual(policy.manifest.metadata["prompt_id"], "repository-repair-v1")
+        self.assertEqual(len(policy.manifest.metadata["prompt_sha256"]), 64)
 
     def test_model_failure_becomes_a_failed_closed_trial(self) -> None:
         report, trajectories = evaluate(

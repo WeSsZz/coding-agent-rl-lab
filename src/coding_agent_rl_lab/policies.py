@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Protocol, Sequence
 
 from .contracts import ActionKind, AgentAction, CodingTask, PolicyManifest, TrajectoryStep
@@ -60,10 +61,14 @@ Never access paths outside the repository. Inspect evidence before editing. Run 
         self.model = model
         self.manifest = PolicyManifest(
             policy_id="openai-compatible-coding-agent",
-            version="1",
+            version="2",
             policy_type="model_tool_loop",
             model=model.model_name,
-            metadata={"action_contract": "coding-action-v1"},
+            metadata={
+                "action_contract": "coding-action-v1",
+                "prompt_id": "repository-repair-v1",
+                "prompt_sha256": hashlib.sha256(self.SYSTEM_PROMPT.encode("utf-8")).hexdigest(),
+            },
         )
 
     def next_action(self, task: CodingTask, history: Sequence[TrajectoryStep]) -> AgentAction:

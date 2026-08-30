@@ -2,7 +2,7 @@
 
 ## 已验证
 
-- 22 个本地单元测试通过；
+- 26 个本地单元测试通过；
 - 两个 repository-owned fixture 在修复前失败、参考补丁后通过；
 - noop 3×2 trials 为 0/6，reference pipeline check 为 6/6；
 - 合法临时目录与 macOS canonical path 兼容；
@@ -10,6 +10,8 @@
 - SWE-Gym/SWE-bench JSONL 字段和 prediction 格式有回归测试；
 - Docker 命令构建不使用 shell，默认禁网、drop capabilities、只读 rootfs，并限制内存、CPU 和 PID；
 - 模型配置不在 repr 中暴露 API key，模型失败会转成失败 Trial。
+- trajectory 包含 task 与 execution provenance，报告可检测 split 泄漏和重复内容；
+- reference 答案轨迹即使通过测试也不会计入 training-eligible 数据。
 
 ## 尚未验证
 

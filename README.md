@@ -34,6 +34,14 @@ M1 已新增：
 - OpenAI-compatible 模型 Coding Policy，严格输出单步 JSON tool action；
 - 模型错误作为 policy violation fail-closed，不中断完整评测报告。
 
+M2 数据合同的无外部依赖部分也已提前落地：
+
+- 每条 trajectory 固定 task split、provenance、base commit 和 execution manifest；
+- execution manifest 记录 environment、verifier、sandbox 与 tool contract 版本；
+- 模型 policy 记录 prompt ID 与内容哈希，不记录 API key；
+- 评测报告自动检查跨 split 仓库快照泄漏、重复内容、答案轨迹和失败类型；
+- `reference` 成功轨迹会被明确标为 answer-bearing，训练可用计数始终为零。
+
 当前机器没有 Docker，也未配置模型 API key，因此真实 SWE-Gym 容器和模型 rollout 尚未执行。准确验证状态见 [`VALIDATION.md`](VALIDATION.md)。
 
 ## 快速运行

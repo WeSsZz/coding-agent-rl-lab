@@ -95,6 +95,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-count", type=int, default=3)
     parser.add_argument("--max-steps", type=int, default=1)
     parser.add_argument("--num-generations", type=int, default=2)
+    parser.add_argument(
+        "--per-device-train-batch-size",
+        type=int,
+        default=1,
+        help=(
+            "Training micro-batch size. Generation still samples --num-generations together "
+            "for group-relative advantages."
+        ),
+    )
     parser.add_argument("--max-completion-length", type=int, default=4096)
     parser.add_argument("--max-tool-calling-iterations", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=1e-6)
@@ -226,7 +235,7 @@ def main() -> None:
     training_args = GRPOConfig(
         output_dir=str(output_dir),
         max_steps=args.max_steps,
-        per_device_train_batch_size=args.num_generations,
+        per_device_train_batch_size=args.per_device_train_batch_size,
         gradient_accumulation_steps=1,
         learning_rate=args.learning_rate,
         bf16=True,
@@ -340,6 +349,12 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise SystemExit("--max-steps must be positive")
     if args.num_generations < 2:
         raise SystemExit("--num-generations must be at least 2 for group-relative rewards")
+    if args.per_device_train_batch_size <= 0:
+        raise SystemExit("--per-device-train-batch-size must be positive")
+    if args.num_generations % args.per_device_train_batch_size != 0:
+        raise SystemExit(
+            "--num-generations must be divisible by --per-device-train-batch-size"
+        )
     if args.max_completion_length <= 0:
         raise SystemExit("--max-completion-length must be positive")
     if args.max_tool_calling_iterations <= 0:

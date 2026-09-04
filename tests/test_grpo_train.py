@@ -37,6 +37,7 @@ class GRPOTrainTests(unittest.TestCase):
         )
 
         self.assertEqual(args.adapter_path, "/models/adapter")
+        self.assertEqual(args.per_device_train_batch_size, 1)
 
     def test_load_prompt_rows_validates_and_limits(self) -> None:
         rows = [

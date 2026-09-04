@@ -40,6 +40,7 @@ class GRPOWorkerError(RuntimeError):
 class _WorkerSession:
     environment: CodingEnvironment | None
     action_kinds: list[str] = field(default_factory=list)
+    action_outcomes: list[dict[str, str]] = field(default_factory=list)
     reward: float = 0.0
     strict_reward: float = 0.0
     reward_components: TrainingReward | None = None
@@ -80,8 +81,14 @@ class GRPOWorker:
         try:
             result = environment.step(action)
         except EnvironmentError as exc:
+            session.action_outcomes.append(
+                {"kind": action.kind.value, "outcome": "environment_error"}
+            )
             self._complete(session, None)
             raise GRPOWorkerError(str(exc)) from exc
+        session.action_outcomes.append(
+            {"kind": action.kind.value, "outcome": _step_outcome(result)}
+        )
         if (
             patch_existed_before_action
             and action.kind in {ActionKind.RUN_TESTS, ActionKind.FINISH}
@@ -100,6 +107,7 @@ class GRPOWorker:
                 else None
             ),
             "action_kinds": list(session.action_kinds) if session.completed else None,
+            "action_outcomes": list(session.action_outcomes) if session.completed else None,
         }
 
     def finalize(self, session_id: str) -> dict[str, Any]:
@@ -116,6 +124,7 @@ class GRPOWorker:
                 else None
             ),
             "action_kinds": list(session.action_kinds),
+            "action_outcomes": list(session.action_outcomes),
         }
 
     def delete(self, session_id: str) -> dict[str, Any]:
@@ -406,6 +415,7 @@ class RemoteGRPOCodingEnvironment:
             "strict_reward": _optional_float(payload.get("strict_reward")),
             "reward_components": components,
             "action_kinds": _action_kind_list(payload.get("action_kinds")),
+            "action_outcomes": _action_outcome_list(payload.get("action_outcomes")),
         }
         line = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
         with _REWARD_AUDIT_LOCK:
@@ -469,6 +479,45 @@ def _action_kind_list(value: Any) -> list[str] | None:
     if any(item not in allowed for item in value):
         return None
     return list(value)
+
+
+def _action_outcome_list(value: Any) -> list[dict[str, str]] | None:
+    if not isinstance(value, list):
+        return None
+    allowed_kinds = {kind.value for kind in ActionKind}
+    allowed_outcomes = {
+        "ok",
+        "updated",
+        "no_exact_match",
+        "tool_error",
+        "violation",
+        "terminated",
+        "environment_error",
+    }
+    normalized: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            return None
+        kind = item.get("kind")
+        outcome = item.get("outcome")
+        if kind not in allowed_kinds or outcome not in allowed_outcomes:
+            return None
+        normalized.append({"kind": kind, "outcome": outcome})
+    return normalized
+
+
+def _step_outcome(result: Any) -> str:
+    if result.violation:
+        return "violation"
+    if result.observation.startswith("Updated "):
+        return "updated"
+    if result.observation.startswith("Tool error:"):
+        if "replace_text requires exactly one match" in result.observation:
+            return "no_exact_match"
+        return "tool_error"
+    if result.terminated:
+        return "terminated"
+    return "ok"
 
 
 def build_parser() -> argparse.ArgumentParser:

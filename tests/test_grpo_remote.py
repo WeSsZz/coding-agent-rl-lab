@@ -122,6 +122,13 @@ class GRPORemoteTests(unittest.TestCase):
             self.assertIn("strict_reward", records[0])
             self.assertIn("reward_components", records[0])
             self.assertEqual(records[0]["action_kinds"], ["read_file", "finish"])
+            self.assertEqual(
+                records[0]["action_outcomes"],
+                [
+                    {"kind": "read_file", "outcome": "ok"},
+                    {"kind": "finish", "outcome": "terminated"},
+                ],
+            )
             self.assertNotIn("observation", records[0])
             self.assertNotIn("token", records[0])
 

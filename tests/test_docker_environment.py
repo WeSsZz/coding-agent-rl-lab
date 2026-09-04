@@ -121,7 +121,10 @@ class DockerEnvironmentTests(unittest.TestCase):
                 )
             )
             self.assertTrue(result.terminated)
-            self.assertEqual(result.violation, "invalid_action:EnvironmentError")
+            self.assertEqual(
+                result.violation,
+                "invalid_action:replace_text:protected_test_file",
+            )
             self.assertEqual(environment.changed_files(), ())
         finally:
             environment.close()
@@ -161,6 +164,20 @@ class DockerEnvironmentTests(unittest.TestCase):
             self.assertFalse(result.terminated)
             self.assertIsNone(result.violation)
             self.assertIn("Tool error: read_file failed", result.observation)
+            self.assertEqual(environment.violations, [])
+        finally:
+            environment.close()
+
+    def test_missing_tool_argument_is_recoverable(self) -> None:
+        runner = FakeDockerRunner(self.base_commit)
+        environment = DockerSandboxEnvironment(self.spec, DockerSandboxConfig(), runner)
+        try:
+            environment.reset(self.task)
+            result = environment.step(AgentAction(ActionKind.SEARCH_TEXT))
+
+            self.assertFalse(result.terminated)
+            self.assertIsNone(result.violation)
+            self.assertIn("Tool error: query must be a non-empty string", result.observation)
             self.assertEqual(environment.violations, [])
         finally:
             environment.close()

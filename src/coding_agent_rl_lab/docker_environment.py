@@ -13,6 +13,7 @@ from .environment import (
     CodingEnvironment,
     EnvironmentError,
     ToolError,
+    action_violation_code,
     read_line_range,
 )
 
@@ -423,7 +424,7 @@ for raw in sys.argv[1:]:
         except (ToolError, UnicodeError) as exc:
             step_result = StepResult(f"Tool error: {exc}", False, self.last_test_result)
         except EnvironmentError as exc:
-            violation = f"invalid_action:{type(exc).__name__}"
+            violation = action_violation_code(action, exc)
             self.violations.append(violation)
             step_result = StepResult(str(exc), True, self.last_test_result, violation)
         self._action_loop_guard.record(action, step_result.observation)
@@ -514,7 +515,7 @@ for raw in sys.argv[1:]:
     @staticmethod
     def _safe_relative_path(raw: Any) -> str:
         if not isinstance(raw, str) or not raw:
-            raise EnvironmentError("path must be a non-empty string")
+            raise ToolError("path must be a non-empty string")
         path = PurePosixPath(raw.replace("\\", "/"))
         if path.is_absolute() or ".." in path.parts:
             raise EnvironmentError("path escapes repository workspace")
@@ -524,7 +525,7 @@ for raw in sys.argv[1:]:
     def _required_string(arguments: dict[str, Any], name: str, *, allow_empty: bool = False) -> str:
         value = arguments.get(name)
         if not isinstance(value, str) or (not allow_empty and not value):
-            raise EnvironmentError(f"{name} must be a {'string' if allow_empty else 'non-empty string'}")
+            raise ToolError(f"{name} must be a {'string' if allow_empty else 'non-empty string'}")
         return value
 
     @staticmethod

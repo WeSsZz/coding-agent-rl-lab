@@ -19,6 +19,21 @@ class ToolError(RuntimeError):
     """A recoverable tool failure that should be shown to the policy."""
 
 
+def action_violation_code(action: AgentAction, error: EnvironmentError) -> str:
+    """Return a stable answer-free category for a terminating action violation."""
+
+    message = str(error)
+    if message.startswith("cannot modify verifier-owned test file:"):
+        category = "protected_test_file"
+    elif message == "path escapes repository workspace":
+        category = "path_escape"
+    elif message.startswith("unsupported action:"):
+        category = "unsupported_action"
+    else:
+        category = "environment_state"
+    return f"invalid_action:{action.kind.value}:{category}"
+
+
 def read_line_range(arguments: dict[str, Any]) -> tuple[int, int] | None:
     has_start = "start_line" in arguments
     has_end = "end_line" in arguments
@@ -251,7 +266,7 @@ class LocalFixtureEnvironment:
         except (ToolError, OSError, UnicodeError) as exc:
             result = StepResult(f"Tool error: {exc}", False, self.last_test_result)
         except EnvironmentError as exc:
-            violation = f"invalid_action:{type(exc).__name__}"
+            violation = action_violation_code(action, exc)
             self.violations.append(violation)
             result = StepResult(str(exc), True, self.last_test_result, violation)
         self._action_loop_guard.record(action, result.observation)
@@ -312,7 +327,7 @@ class LocalFixtureEnvironment:
 
     def _resolve_repository_path(self, raw: Any) -> Path:
         if not isinstance(raw, str) or not raw:
-            raise EnvironmentError("path must be a non-empty string")
+            raise ToolError("path must be a non-empty string")
         _, repository = self._require_active()
         candidate = (repository / raw).resolve()
         if not candidate.is_relative_to(repository):
@@ -350,7 +365,7 @@ class LocalFixtureEnvironment:
     def _required_string(arguments: dict[str, Any], name: str, *, allow_empty: bool = False) -> str:
         value = arguments.get(name)
         if not isinstance(value, str) or (not allow_empty and not value):
-            raise EnvironmentError(f"{name} must be a {'string' if allow_empty else 'non-empty string'}")
+            raise ToolError(f"{name} must be a {'string' if allow_empty else 'non-empty string'}")
         return value
 
     @staticmethod

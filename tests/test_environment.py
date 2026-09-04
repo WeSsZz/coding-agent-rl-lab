@@ -38,7 +38,10 @@ class EnvironmentTests(unittest.TestCase):
             result = environment.step(AgentAction(ActionKind.READ_FILE, {"path": "../../etc/passwd"}))
             self.assertTrue(result.terminated)
             self.assertIsNotNone(result.violation)
-            self.assertEqual(environment.violations, ["invalid_action:EnvironmentError"])
+            self.assertEqual(
+                environment.violations,
+                ["invalid_action:read_file:path_escape"],
+            )
 
     def test_missing_file_is_a_recoverable_tool_error(self) -> None:
         with LocalFixtureEnvironment(self.root) as environment:
@@ -47,6 +50,16 @@ class EnvironmentTests(unittest.TestCase):
             self.assertFalse(result.terminated)
             self.assertIsNone(result.violation)
             self.assertIn("Tool error: file does not exist", result.observation)
+            self.assertEqual(environment.violations, [])
+
+    def test_missing_tool_argument_is_recoverable(self) -> None:
+        with LocalFixtureEnvironment(self.root) as environment:
+            environment.reset(self.task)
+            result = environment.step(AgentAction(ActionKind.SEARCH_TEXT))
+
+            self.assertFalse(result.terminated)
+            self.assertIsNone(result.violation)
+            self.assertIn("Tool error: query must be a non-empty string", result.observation)
             self.assertEqual(environment.violations, [])
 
     def test_search_text_finds_literal_content(self) -> None:

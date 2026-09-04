@@ -97,17 +97,27 @@ class GRPOCodingEnvironment:
 
         return self._act(AgentAction(ActionKind.SEARCH_TEXT, {"query": query}))
 
-    def read_file(self, path: str) -> str:
+    def read_file(
+        self,
+        path: str,
+        start_line: int | None = None,
+        end_line: int | None = None,
+    ) -> str:
         """Read a repository file using a relative path.
 
         Args:
             path: Repository-relative path previously observed in tool output.
+            start_line: Optional one-based first line; provide with end_line.
+            end_line: Optional inclusive last line; provide with start_line.
 
         Returns:
             Bounded file contents.
         """
 
-        return self._act(AgentAction(ActionKind.READ_FILE, {"path": path}))
+        arguments: dict[str, Any] = {"path": path}
+        if start_line is not None or end_line is not None:
+            arguments.update({"start_line": start_line, "end_line": end_line})
+        return self._act(AgentAction(ActionKind.READ_FILE, arguments))
 
     def replace_text(self, path: str, old: str, new: str) -> str:
         """Replace one exact text occurrence in a non-test repository file.

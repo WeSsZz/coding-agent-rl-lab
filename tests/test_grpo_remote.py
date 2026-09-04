@@ -108,6 +108,8 @@ class GRPORemoteTests(unittest.TestCase):
                 reward_audit_path=audit_path,
             )
             environment.reset(task_id="clamp-negative-values")
+            ranged = environment.read_file("values.py", start_line=1, end_line=20)
+            self.assertIn("clamp_non_negative", ranged)
             environment.finish()
 
             records = [
@@ -119,6 +121,7 @@ class GRPORemoteTests(unittest.TestCase):
             self.assertEqual(records[0]["completion_source"], "action")
             self.assertIn("strict_reward", records[0])
             self.assertIn("reward_components", records[0])
+            self.assertEqual(records[0]["action_kinds"], ["read_file", "finish"])
             self.assertNotIn("observation", records[0])
             self.assertNotIn("token", records[0])
 

@@ -95,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-count", type=int, default=3)
     parser.add_argument("--max-steps", type=int, default=1)
     parser.add_argument("--num-generations", type=int, default=2)
-    parser.add_argument("--max-completion-length", type=int, default=256)
+    parser.add_argument("--max-completion-length", type=int, default=4096)
     parser.add_argument("--max-tool-calling-iterations", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=1e-6)
     parser.add_argument("--seed", type=int, default=12345)

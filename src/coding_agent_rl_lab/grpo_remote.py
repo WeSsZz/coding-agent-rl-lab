@@ -7,7 +7,7 @@ import threading
 import urllib.error
 import urllib.request
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -39,6 +39,7 @@ class GRPOWorkerError(RuntimeError):
 @dataclass
 class _WorkerSession:
     environment: CodingEnvironment | None
+    action_kinds: list[str] = field(default_factory=list)
     reward: float = 0.0
     strict_reward: float = 0.0
     reward_components: TrainingReward | None = None
@@ -74,6 +75,7 @@ class GRPOWorker:
     def action(self, session_id: str, action: AgentAction) -> dict[str, Any]:
         session = self._session(session_id)
         environment = self._active_environment(session)
+        session.action_kinds.append(action.kind.value)
         patch_existed_before_action = bool(environment.changed_files())
         try:
             result = environment.step(action)
@@ -97,6 +99,7 @@ class GRPOWorker:
                 if session.completed and session.reward_components is not None
                 else None
             ),
+            "action_kinds": list(session.action_kinds) if session.completed else None,
         }
 
     def finalize(self, session_id: str) -> dict[str, Any]:
@@ -112,6 +115,7 @@ class GRPOWorker:
                 if session.reward_components is not None
                 else None
             ),
+            "action_kinds": list(session.action_kinds),
         }
 
     def delete(self, session_id: str) -> dict[str, Any]:
@@ -294,16 +298,26 @@ class RemoteGRPOCodingEnvironment:
         """
         return self._act(AgentAction(ActionKind.SEARCH_TEXT, {"query": query}))
 
-    def read_file(self, path: str) -> str:
+    def read_file(
+        self,
+        path: str,
+        start_line: int | None = None,
+        end_line: int | None = None,
+    ) -> str:
         """Read a repository file.
 
         Args:
             path: Repository-relative file path.
+            start_line: Optional one-based first line; provide with end_line.
+            end_line: Optional inclusive last line; provide with start_line.
 
         Returns:
             Bounded file contents.
         """
-        return self._act(AgentAction(ActionKind.READ_FILE, {"path": path}))
+        arguments: dict[str, Any] = {"path": path}
+        if start_line is not None or end_line is not None:
+            arguments.update({"start_line": start_line, "end_line": end_line})
+        return self._act(AgentAction(ActionKind.READ_FILE, arguments))
 
     def replace_text(self, path: str, old: str, new: str) -> str:
         """Replace one exact source text occurrence.
@@ -391,6 +405,7 @@ class RemoteGRPOCodingEnvironment:
             "reward": _optional_float(payload.get("reward")),
             "strict_reward": _optional_float(payload.get("strict_reward")),
             "reward_components": components,
+            "action_kinds": _action_kind_list(payload.get("action_kinds")),
         }
         line = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
         with _REWARD_AUDIT_LOCK:
@@ -445,6 +460,15 @@ def _optional_float(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     return None
+
+
+def _action_kind_list(value: Any) -> list[str] | None:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        return None
+    allowed = {kind.value for kind in ActionKind}
+    if any(item not in allowed for item in value):
+        return None
+    return list(value)
 
 
 def build_parser() -> argparse.ArgumentParser:

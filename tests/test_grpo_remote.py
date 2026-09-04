@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -96,6 +98,29 @@ class GRPORemoteTests(unittest.TestCase):
         args = build_parser().parse_args(["--test-timeout-seconds", "180"])
 
         self.assertEqual(args.test_timeout_seconds, 180.0)
+
+    def test_remote_client_writes_answer_free_reward_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audit_path = Path(temp_dir) / "reward-audit.jsonl"
+            environment = RemoteGRPOCodingEnvironment(
+                self.base_url,
+                self.token,
+                reward_audit_path=audit_path,
+            )
+            environment.reset(task_id="clamp-negative-values")
+            environment.finish()
+
+            records = [
+                json.loads(line)
+                for line in audit_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["task_id"], "clamp-negative-values")
+            self.assertEqual(records[0]["completion_source"], "action")
+            self.assertIn("strict_reward", records[0])
+            self.assertIn("reward_components", records[0])
+            self.assertNotIn("observation", records[0])
+            self.assertNotIn("token", records[0])
 
     def test_inactive_probe_reward_is_safe_for_trl_introspection(self) -> None:
         environment = RemoteGRPOCodingEnvironment(self.base_url, self.token)

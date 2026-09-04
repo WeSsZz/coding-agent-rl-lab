@@ -29,6 +29,9 @@ from .swe_gym_smoke import (
 )
 
 
+_REWARD_AUDIT_LOCK = threading.Lock()
+
+
 class GRPOWorkerError(RuntimeError):
     pass
 
@@ -245,10 +248,18 @@ def build_worker_server(
 class RemoteGRPOCodingEnvironment:
     """TRL tool environment client for the loopback-only Ubuntu worker API."""
 
-    def __init__(self, base_url: str, token: str) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        *,
+        reward_audit_path: Path | None = None,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._token = token
+        self._reward_audit_path = reward_audit_path
         self._session_id: str | None = None
+        self._task_id: str | None = None
         self._reward = 0.0
         self._completed = False
 
@@ -259,6 +270,7 @@ class RemoteGRPOCodingEnvironment:
         self._delete()
         payload = self._request("POST", "/v1/sessions", {"task_id": task_id})
         self._session_id = str(payload["session_id"])
+        self._task_id = task_id
         self._reward = 0.0
         self._completed = False
         return str(payload["observation"])
@@ -331,6 +343,7 @@ class RemoteGRPOCodingEnvironment:
             payload = self._request("POST", f"/v1/sessions/{session_id}/finalize", {})
             self._reward = float(payload["reward"])
             self._completed = True
+            self._audit_reward(payload, completion_source="finalize")
             self._delete()
         return self._reward
 
@@ -361,8 +374,29 @@ class RemoteGRPOCodingEnvironment:
         if payload.get("terminated"):
             self._completed = True
             self._reward = float(payload.get("reward") or 0.0)
+            self._audit_reward(payload, completion_source="action")
             self._delete()
         return str(payload["observation"])
+
+    def _audit_reward(self, payload: dict[str, Any], *, completion_source: str) -> None:
+        if self._reward_audit_path is None:
+            return
+        components = payload.get("reward_components")
+        if not isinstance(components, dict):
+            components = None
+        record = {
+            "schema_version": 1,
+            "task_id": self._task_id,
+            "completion_source": completion_source,
+            "reward": _optional_float(payload.get("reward")),
+            "strict_reward": _optional_float(payload.get("strict_reward")),
+            "reward_components": components,
+        }
+        line = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+        with _REWARD_AUDIT_LOCK:
+            self._reward_audit_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._reward_audit_path.open("a", encoding="utf-8") as stream:
+                stream.write(line)
 
     def _request(self, method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         request = urllib.request.Request(
@@ -403,6 +437,14 @@ class RemoteGRPOCodingEnvironment:
             self._request("DELETE", f"/v1/sessions/{session_id}", {})
         except GRPOEnvironmentError:
             pass
+
+
+def _optional_float(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
 
 
 def build_parser() -> argparse.ArgumentParser:

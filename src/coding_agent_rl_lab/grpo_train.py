@@ -75,6 +75,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--worker-token-file", required=True)
     parser.add_argument("--worker-base-url", default="http://127.0.0.1:9010")
     parser.add_argument("--output-dir", default="/root/autodl-tmp/grpo-output")
+    parser.add_argument(
+        "--reward-audit-path",
+        help=(
+            "Optional JSONL path for answer-free per-rollout reward components. "
+            "Training defaults to <output-dir>/reward-audit.jsonl."
+        ),
+    )
     parser.add_argument("--task-count", type=int, default=3)
     parser.add_argument("--max-steps", type=int, default=1)
     parser.add_argument("--num-generations", type=int, default=2)
@@ -158,8 +165,18 @@ def main() -> None:
                 + json.dumps(bare_json_probe, ensure_ascii=False)
             )
 
+    reward_audit_path = (
+        Path(args.reward_audit_path)
+        if args.reward_audit_path
+        else (Path(args.output_dir) / "reward-audit.jsonl" if args.train else None)
+    )
+
     def environment_factory() -> RemoteGRPOCodingEnvironment:
-        return RemoteGRPOCodingEnvironment(args.worker_base_url, token)
+        return RemoteGRPOCodingEnvironment(
+            args.worker_base_url,
+            token,
+            reward_audit_path=reward_audit_path,
+        )
 
     worker_probe = environment_factory()
     try:
@@ -185,6 +202,7 @@ def main() -> None:
         "worker_baseline_received": "Baseline verifier result:" in initial_observation,
         "worker_baseline_failed": "Tests failed" in initial_observation,
         "worker_file_listing_received": bool(file_listing.strip()),
+        "reward_audit_path": str(reward_audit_path) if reward_audit_path is not None else None,
         "training_performed": False,
     }
     if not args.train:

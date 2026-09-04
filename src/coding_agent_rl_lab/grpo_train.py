@@ -27,6 +27,12 @@ _BARE_JSON_TOOL_RESPONSE_TEMPLATE: dict[str, Any] = {
     },
 }
 
+_BARE_JSON_TOOL_CALL_INSTRUCTION = """Every assistant turn must contain exactly one bare JSON
+object and no prose or tags. Use this exact shape:
+{"name":"search_text","arguments":{"query":"literal identifier"}}
+Replace the example name and arguments with the selected provided tool. Never use Markdown fences,
+<tool_call> tags, a "kind" field, or natural-language explanation."""
+
 
 def load_prompt_rows(path: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
@@ -99,7 +105,10 @@ def main() -> None:
     model_path = Path(args.model_path).resolve()
     if not model_path.is_dir():
         raise SystemExit(f"model path is not a directory: {model_path}")
-    rows = load_prompt_rows(Path(args.prompt_rows), limit=args.task_count)
+    rows = configure_prompt_rows_tool_format(
+        load_prompt_rows(Path(args.prompt_rows), limit=args.task_count),
+        bare_json_tool_calls=args.bare_json_tool_calls,
+    )
     token = read_worker_token(Path(args.worker_token_file))
 
     try:
@@ -313,6 +322,26 @@ def configure_tool_response_parsing(
     if bare_json_tool_calls:
         tokenizer.response_template = copy.deepcopy(_BARE_JSON_TOOL_RESPONSE_TEMPLATE)
     return tokenizer
+
+
+def configure_prompt_rows_tool_format(
+    rows: list[dict[str, Any]],
+    *,
+    bare_json_tool_calls: bool,
+) -> list[dict[str, Any]]:
+    configured = copy.deepcopy(rows)
+    if not bare_json_tool_calls:
+        return configured
+    marker = "\nEvery assistant turn"
+    for row in configured:
+        for message in row["prompt"]:
+            if message["role"] != "system":
+                continue
+            prefix, separator, _ = message["content"].partition(marker)
+            if not separator:
+                prefix = message["content"].rstrip()
+            message["content"] = prefix.rstrip() + "\n\n" + _BARE_JSON_TOOL_CALL_INSTRUCTION
+    return configured
 
 
 def run_bare_json_tool_parsing_probe(tokenizer: Any, parse_response_fn: Any) -> dict[str, Any]:

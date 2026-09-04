@@ -10,6 +10,7 @@ from pathlib import Path
 from coding_agent_rl_lab.grpo_train import (
     GRPOTrainingError,
     _metric_number,
+    configure_prompt_rows_tool_format,
     configure_tool_response_parsing,
     is_valid_bare_json_tool_probe,
     load_prompt_rows,
@@ -82,6 +83,32 @@ class GRPOTrainTests(unittest.TestCase):
         tokenizer = Tokenizer()
         configure_tool_response_parsing(tokenizer, bare_json_tool_calls=False)
         self.assertEqual(tokenizer.response_template, {"original": True})
+
+    def test_bare_json_prompt_does_not_contradict_parser(self) -> None:
+        rows = [
+            {
+                "task_id": "task",
+                "prompt": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Use tools.\n\nEvery assistant turn must contain exactly one tool call.\n"
+                            "<tool_call>{}</tool_call>\nNever answer with a plain JSON action object."
+                        ),
+                    },
+                    {"role": "user", "content": "fix it"},
+                ],
+            }
+        ]
+
+        configured = configure_prompt_rows_tool_format(rows, bare_json_tool_calls=True)
+
+        system_prompt = configured[0]["prompt"][0]["content"]
+        self.assertIn('{"name":"search_text"', system_prompt)
+        self.assertIn("Never use Markdown fences", system_prompt)
+        self.assertNotIn("must contain exactly one tool call", system_prompt)
+        self.assertNotIn("Never answer with a plain JSON", system_prompt)
+        self.assertNotEqual(configured, rows)
 
     def test_bare_json_parser_probe_requires_exact_tool_shape(self) -> None:
         class Tokenizer:

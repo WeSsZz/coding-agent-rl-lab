@@ -17,10 +17,11 @@ def load_tasks(path: str | Path) -> tuple[CodingTask, ...]:
     seen: set[str] = set()
     for line_number, row in rows:
         try:
+            fixture_path = row.get("fixture_path")
             task = CodingTask(
                 task_id=str(row["task_id"]),
                 issue=str(row["issue"]),
-                fixture_path=str(row["fixture_path"]),
+                fixture_path=None if fixture_path is None else str(fixture_path),
                 base_commit=str(row["base_commit"]),
                 test_command=tuple(str(item) for item in row["test_command"]),
                 split=DatasetSplit(row["split"]),

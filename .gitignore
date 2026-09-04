@@ -6,5 +6,8 @@ dist/
 build/
 *.egg-info/
 work/
+remote-artifacts/
+codex-sync*.tar
+run-remote*.ps1
 .DS_Store
 

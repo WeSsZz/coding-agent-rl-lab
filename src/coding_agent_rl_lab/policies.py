@@ -2,13 +2,20 @@ from __future__ import annotations
 
 from typing import Protocol, Sequence
 
-from .contracts import ActionKind, AgentAction, CodingTask, PolicyManifest, TrajectoryStep
+from .contracts import ActionKind, AgentAction, CodingTask, PolicyDecision, PolicyManifest, TrajectoryStep
 
 
 class Policy(Protocol):
     manifest: PolicyManifest
 
-    def next_action(self, task: CodingTask, history: Sequence[TrajectoryStep]) -> AgentAction: ...
+    def next_action(
+        self,
+        task: CodingTask,
+        history: Sequence[TrajectoryStep],
+        *,
+        seed: int | None = None,
+        initial_observation: str = "",
+    ) -> AgentAction | PolicyDecision: ...
 
 
 class NoOpPolicy:
@@ -19,8 +26,15 @@ class NoOpPolicy:
         metadata={"purpose": "expected-failure control"},
     )
 
-    def next_action(self, task: CodingTask, history: Sequence[TrajectoryStep]) -> AgentAction:
-        del task
+    def next_action(
+        self,
+        task: CodingTask,
+        history: Sequence[TrajectoryStep],
+        *,
+        seed: int | None = None,
+        initial_observation: str = "",
+    ) -> AgentAction:
+        del task, seed, initial_observation
         return AgentAction(ActionKind.RUN_TESTS if not history else ActionKind.FINISH)
 
 
@@ -37,7 +51,15 @@ class ReferencePolicy:
     def __init__(self, actions: dict[str, tuple[AgentAction, ...]]) -> None:
         self.actions = actions
 
-    def next_action(self, task: CodingTask, history: Sequence[TrajectoryStep]) -> AgentAction:
+    def next_action(
+        self,
+        task: CodingTask,
+        history: Sequence[TrajectoryStep],
+        *,
+        seed: int | None = None,
+        initial_observation: str = "",
+    ) -> AgentAction:
+        del seed, initial_observation
         sequence = self.actions.get(task.task_id)
         if sequence is None:
             raise KeyError(f"no reference actions for task {task.task_id}")

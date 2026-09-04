@@ -5,8 +5,8 @@ from typing import Any
 
 from .contracts import CodingTask, Trajectory
 from .dataset import load_reference_actions, load_tasks
-from .environment import LocalFixtureEnvironment
 from .policies import NoOpPolicy, Policy, ReferencePolicy
+from .providers import LocalFixtureEnvironmentProvider
 from .rollout import RolloutCollector, build_report
 
 
@@ -36,7 +36,7 @@ def evaluate(
     root = Path(project_root).resolve()
     tasks = load_builtin_tasks(root)
     policy = build_policy(policy_name, root)
-    collector = RolloutCollector(lambda: LocalFixtureEnvironment(root))
+    collector = RolloutCollector(LocalFixtureEnvironmentProvider(root))
     trajectories = tuple(
         collector.collect(
             task,

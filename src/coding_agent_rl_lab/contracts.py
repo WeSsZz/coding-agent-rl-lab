@@ -13,6 +13,7 @@ class DatasetSplit(str, Enum):
 
 class ActionKind(str, Enum):
     LIST_FILES = "list_files"
+    SEARCH_TEXT = "search_text"
     READ_FILE = "read_file"
     REPLACE_TEXT = "replace_text"
     RUN_TESTS = "run_tests"
@@ -23,7 +24,7 @@ class ActionKind(str, Enum):
 class CodingTask:
     task_id: str
     issue: str
-    fixture_path: str
+    fixture_path: str | None
     base_commit: str
     test_command: tuple[str, ...]
     split: DatasetSplit
@@ -56,6 +57,15 @@ class AgentAction:
 
 
 @dataclass(frozen=True)
+class PolicyDecision:
+    action: AgentAction
+    input_messages: tuple[dict[str, str], ...] = ()
+    output_text: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    violation: str | None = None
+
+
+@dataclass(frozen=True)
 class TestResult:
     command: tuple[str, ...]
     passed: bool
@@ -64,6 +74,18 @@ class TestResult:
     stderr: str
     duration_ms: float
     timed_out: bool = False
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> TestResult:
+        return cls(
+            command=tuple(value["command"]),
+            passed=bool(value["passed"]),
+            exit_code=value.get("exit_code"),
+            stdout=str(value.get("stdout", "")),
+            stderr=str(value.get("stderr", "")),
+            duration_ms=float(value.get("duration_ms", 0.0)),
+            timed_out=bool(value.get("timed_out", False)),
+        )
 
 
 @dataclass(frozen=True)
@@ -82,6 +104,28 @@ class TrajectoryStep:
     terminated: bool
     test_result: TestResult | None = None
     violation: str | None = None
+    policy_input: tuple[dict[str, str], ...] = ()
+    policy_output: str | None = None
+    policy_metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> TrajectoryStep:
+        raw_test_result = value.get("test_result")
+        return cls(
+            sequence=int(value["sequence"]),
+            action=AgentAction.from_dict(value["action"]),
+            observation=str(value.get("observation", "")),
+            terminated=bool(value.get("terminated", False)),
+            test_result=(
+                TestResult.from_dict(raw_test_result)
+                if isinstance(raw_test_result, dict)
+                else None
+            ),
+            violation=value.get("violation"),
+            policy_input=tuple(dict(message) for message in value.get("policy_input", ())),
+            policy_output=value.get("policy_output"),
+            policy_metadata=dict(value.get("policy_metadata", {})),
+        )
 
 
 @dataclass(frozen=True)
@@ -93,6 +137,18 @@ class RewardVector:
     tool_calls: int
     steps: int
     violations: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> RewardVector:
+        return cls(
+            task_success=bool(value["task_success"]),
+            tests_passed=bool(value["tests_passed"]),
+            regression_free=bool(value["regression_free"]),
+            patch_created=bool(value["patch_created"]),
+            tool_calls=int(value["tool_calls"]),
+            steps=int(value["steps"]),
+            violations=tuple(value.get("violations", ())),
+        )
 
     @property
     def scalar(self) -> float:
@@ -118,6 +174,18 @@ class PolicyManifest:
     parent_version: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> PolicyManifest:
+        return cls(
+            policy_id=str(value["policy_id"]),
+            version=str(value["version"]),
+            policy_type=str(value["policy_type"]),
+            model=value.get("model"),
+            training_dataset=value.get("training_dataset"),
+            parent_version=value.get("parent_version"),
+            metadata=dict(value.get("metadata", {})),
+        )
+
 
 @dataclass(frozen=True)
 class Trajectory:
@@ -131,10 +199,31 @@ class Trajectory:
     changed_files: tuple[str, ...]
     baseline_tests_passed: bool
     final_tests_passed: bool
-    schema_version: int = 1
+    initial_observation: str
+    schema_version: int = 3
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         for step in payload["steps"]:
             step["action"]["kind"] = step["action"]["kind"].value
         return payload
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> Trajectory:
+        schema_version = int(value.get("schema_version", 0))
+        if schema_version != 3:
+            raise ValueError(f"unsupported trajectory schema version: {schema_version}")
+        return cls(
+            trajectory_id=str(value["trajectory_id"]),
+            task_id=str(value["task_id"]),
+            repetition=int(value["repetition"]),
+            seed=int(value["seed"]),
+            policy=PolicyManifest.from_dict(value["policy"]),
+            steps=tuple(TrajectoryStep.from_dict(step) for step in value.get("steps", ())),
+            reward=RewardVector.from_dict(value["reward"]),
+            changed_files=tuple(value.get("changed_files", ())),
+            baseline_tests_passed=bool(value["baseline_tests_passed"]),
+            final_tests_passed=bool(value["final_tests_passed"]),
+            initial_observation=str(value.get("initial_observation", "")),
+            schema_version=schema_version,
+        )

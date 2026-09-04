@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import hashlib
 import shutil
 import tempfile
@@ -180,15 +181,19 @@ class LocalFixtureEnvironment:
                 if len(query) > 200:
                     raise ToolError("search_text query must be at most 200 characters")
                 matches: list[str] = []
+                repository_paths: list[str] = []
                 query_folded = query.casefold()
                 for path in repository.rglob("*"):
                     if not path.is_file() or any(
-                        part in {".git", "__pycache__", ".pytest_cache"} for part in path.parts
+                        part in {".git", "__pycache__", ".pytest_cache"}
+                        or part.endswith(".egg-info")
+                        for part in path.parts
                     ):
                         continue
-                    relative = str(path.relative_to(repository))
+                    relative = path.relative_to(repository).as_posix()
+                    repository_paths.append(relative)
                     if query_folded in relative.casefold():
-                        matches.append(relative)
+                        matches.append(f"PATH_MATCH:{relative}")
                     if path.stat().st_size > 1_000_000:
                         continue
                     try:
@@ -202,7 +207,19 @@ class LocalFixtureEnvironment:
                                 break
                     if len(matches) >= 100:
                         break
-                observation = "\n".join(matches) if matches else f"No matches for: {query}"
+                if matches:
+                    observation = "\n".join(matches)
+                else:
+                    candidates = {relative.casefold(): relative for relative in repository_paths}
+                    suggestions = difflib.get_close_matches(
+                        query_folded,
+                        candidates,
+                        n=8,
+                        cutoff=0.45,
+                    )
+                    rendered = [f"No exact matches for: {query}"]
+                    rendered.extend(f"SUGGESTED_PATH:{candidates[item]}" for item in suggestions)
+                    observation = "\n".join(rendered)
                 result = StepResult(observation, False)
             elif action.kind is ActionKind.READ_FILE:
                 path = self._resolve_repository_path(action.arguments.get("path"))

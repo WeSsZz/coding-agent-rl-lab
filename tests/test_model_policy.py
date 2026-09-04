@@ -87,7 +87,7 @@ class OpenAICompatiblePolicyTests(unittest.TestCase):
         self.assertNotIn("PRIVATE-TEST-PATCH", recorded_prompt)
         self.assertNotIn("secret-token", json.dumps(policy.manifest.metadata))
         self.assertIn("test_decimal", recorded_prompt)
-        self.assertEqual(policy.manifest.metadata["prompt_version"], "coding-tools-json-v12")
+        self.assertEqual(policy.manifest.metadata["prompt_version"], "coding-tools-json-v13")
         self.assertIn("Preserve at least four tool steps", decision.input_messages[0]["content"])
 
         url, payload, headers, timeout = transport.calls[0]

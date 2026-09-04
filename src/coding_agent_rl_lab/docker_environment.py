@@ -232,14 +232,20 @@ print(content, end='')
 """.strip()
     _SEARCH_TEXT_SCRIPT = """
 from pathlib import Path
+import difflib
 import sys
 
 query = sys.argv[1].casefold()
 matches = []
+repository_paths = []
 for path in Path('.').rglob('*'):
-    if not path.is_file() or any(part in {'.git', '__pycache__', '.pytest_cache'} for part in path.parts):
+    if not path.is_file() or any(
+        part in {'.git', '__pycache__', '.pytest_cache'} or part.endswith('.egg-info')
+        for part in path.parts
+    ):
         continue
     relative = path.as_posix()
+    repository_paths.append(relative)
     parts = {part.casefold() for part in path.parts}
     if parts & {'docs', 'doc', 'examples', 'example'}:
         location_rank = 2
@@ -248,7 +254,7 @@ for path in Path('.').rglob('*'):
     else:
         location_rank = 0
     if query in relative.casefold():
-        matches.append((location_rank, 0, relative, 0, relative))
+        matches.append((location_rank, 0, relative, 0, f'PATH_MATCH:{relative}'))
     try:
         too_large = path.stat().st_size > 1_000_000
     except OSError:
@@ -265,7 +271,14 @@ for path in Path('.').rglob('*'):
             matches.append((location_rank, 1, relative, line_number, rendered))
 matches.sort(key=lambda item: item[:4])
 rendered_matches = [item[4] for item in matches[:100]]
-print('\\n'.join(rendered_matches) if rendered_matches else f'No matches for: {sys.argv[1]}')
+if rendered_matches:
+    print('\\n'.join(rendered_matches))
+else:
+    candidates = {relative.casefold(): relative for relative in repository_paths}
+    suggestions = difflib.get_close_matches(query, candidates, n=8, cutoff=0.45)
+    rendered = [f'No exact matches for: {sys.argv[1]}']
+    rendered.extend(f'SUGGESTED_PATH:{candidates[item]}' for item in suggestions)
+    print('\\n'.join(rendered))
 """.strip()
     _REPLACE_TEXT_SCRIPT = (
         "from pathlib import Path; import sys; "

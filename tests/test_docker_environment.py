@@ -210,6 +210,52 @@ class DockerEnvironmentTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "example.py:2:needle\n")
 
+    def test_search_text_marks_path_matches_and_ignores_egg_info(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory, "moto/stepfunctions/models.py")
+            source.parent.mkdir(parents=True)
+            source.write_text("source content\n", encoding="utf-8")
+            metadata = Path(directory, "moto.egg-info/SOURCES.txt")
+            metadata.parent.mkdir(parents=True)
+            metadata.write_text("moto/stepfunctions/models.py\n", encoding="utf-8")
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-c",
+                    DockerSandboxEnvironment._SEARCH_TEXT_SCRIPT,
+                    "moto/stepfunctions/models.py",
+                ),
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, "PATH_MATCH:moto/stepfunctions/models.py\n")
+
+    def test_search_text_suggests_close_path_for_obsolete_filename(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory, "moto/dynamodb/models/__init__.py")
+            source.parent.mkdir(parents=True)
+            source.write_text("source content\n", encoding="utf-8")
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-c",
+                    DockerSandboxEnvironment._SEARCH_TEXT_SCRIPT,
+                    "moto/dynamodb/models.py",
+                ),
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("No exact matches for: moto/dynamodb/models.py", completed.stdout)
+        self.assertIn("SUGGESTED_PATH:moto/dynamodb/models/__init__.py", completed.stdout)
+
     def test_read_file_script_can_select_a_line_range(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             Path(directory, "example.py").write_text(

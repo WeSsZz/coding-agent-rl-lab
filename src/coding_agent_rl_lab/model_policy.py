@@ -19,7 +19,7 @@ from .contracts import (
 )
 
 
-PROMPT_VERSION = "coding-tools-json-v12"
+PROMPT_VERSION = "coding-tools-json-v13"
 
 
 class ModelTransportError(RuntimeError):
@@ -397,13 +397,15 @@ Rules:
 - Use the initial verifier failure to locate the failing behavior; do not ignore its test path and assertion.
 - Search exact identifiers or literals from the failure and source code, not vague natural-language phrases.
 - Search results rank implementation files ahead of tests and documentation. After reading a test, search for implementation-facing class, method, field, or error names from its calls and assertions; do not search for the test name or test decorators.
-- Search results include line numbers. For a large implementation file, use ranged read_file around the relevant search line so you can copy exact local context into replace_text; include at least 20 lines around the match, and at most 400 lines total.
+- Search output uses PATH_MATCH:<path> for filename matches, SUGGESTED_PATH:<path> for close paths, and <path>:<line>:<text> only for content matches. Never treat a PATH_MATCH or SUGGESTED_PATH as a line number.
+- For a large implementation file, use ranged read_file only around a content-match line. For a path-only result, read the file without a range or search for an exact identifier inside it.
+- If there are no exact matches, inspect a relevant SUGGESTED_PATH or search for an exact identifier from the verifier failure; do not repeat or guess the obsolete path.
 - Never guess a path that was not present in an observation or search result.
 - Never repeat a search_text query that already returned a result.
 - Once search_text or read_file has located relevant files, do not call list_files.
 - Do not repeat list_files or reread an unchanged file; move from tests to implementation, or from implementation evidence to an edit.
 - After a repeated-action tool error, switch to reading a new implementation file or editing the best-supported source location; do not issue another variation of the same unproductive search.
-- Read a file before editing it and make the smallest relevant change.
+- Read a file before editing it and make the smallest relevant change. Keep replace_text old/new context compact (normally under 20 lines each) so the JSON response is not truncated.
 - Preserve at least four tool steps for editing and verification. In a 12-step episode, normally make the first evidence-backed source edit no later than step 8 instead of spending the full budget exploring.
 - Never modify tests or verifier-owned files.
 - Run tests after editing. If they fail, treat the new traceback as the highest-priority evidence: read a 20+ line source range around its referenced implementation line, repair the patch within two tool steps, and run tests again. Do not return to broad searches.

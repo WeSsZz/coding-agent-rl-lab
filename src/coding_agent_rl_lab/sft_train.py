@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .model_policy import PROMPT_VERSION, OpenAICompatiblePolicy
+from .sft_grpo import GRPO_ACTION_PROTOCOL, GRPO_SFT_PROMPT_VERSION, GRPO_SFT_SCHEMA
 from .swe_gym_smoke import pinned_rows_for_task_set
 
 
@@ -33,7 +34,13 @@ def load_sft_examples(
                 example = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise SFTTrainingError(f"invalid JSON on SFT row {line_number}") from exc
-            _validate_sft_example(example, line_number, allowed_task_ids)
+            _validate_sft_example(
+                example,
+                line_number,
+                allowed_task_ids,
+                dataset_schema=report["dataset_schema"],
+                prompt_version=report["prompt_version"],
+            )
             example_id = example["example_id"]
             if example_id in seen:
                 raise SFTTrainingError(f"duplicate SFT example_id: {example_id}")
@@ -173,6 +180,7 @@ def main() -> None:
         "dataset_task_set": dataset_report["task_set"],
         "dataset_contains_answers": dataset_report["contains_answers"],
         "prompt_version": dataset_report["prompt_version"],
+        "action_protocol": dataset_report.get("action_protocol", "model-policy-json"),
         "example_count": len(examples),
         "token_lengths": token_lengths,
         "torch_version": torch.__version__,
@@ -259,7 +267,8 @@ def main() -> None:
 
 
 def _validate_dataset_report(report: dict[str, Any]) -> None:
-    if report.get("dataset_schema") != "coding-agent-gold-sft-v1":
+    schema = report.get("dataset_schema")
+    if schema not in {"coding-agent-gold-sft-v1", GRPO_SFT_SCHEMA}:
         raise SFTTrainingError("unsupported SFT dataset schema")
     if report.get("task_set") != "train":
         raise SFTTrainingError("SFT dataset report must be train-only")
@@ -267,8 +276,13 @@ def _validate_dataset_report(report: dict[str, Any]) -> None:
         raise SFTTrainingError("SFT dataset report must explicitly declare contains_answers=true")
     if report.get("answer_source") != "official_swe_gym_gold_patch":
         raise SFTTrainingError("SFT dataset report has an unsupported answer source")
-    if report.get("prompt_version") != PROMPT_VERSION:
+    expected_prompt = (
+        GRPO_SFT_PROMPT_VERSION if schema == GRPO_SFT_SCHEMA else PROMPT_VERSION
+    )
+    if report.get("prompt_version") != expected_prompt:
         raise SFTTrainingError("SFT dataset prompt version does not match the current policy")
+    if schema == GRPO_SFT_SCHEMA and report.get("action_protocol") != GRPO_ACTION_PROTOCOL:
+        raise SFTTrainingError("GRPO SFT dataset has an unsupported action protocol")
     task_ids = report.get("task_ids")
     if not isinstance(task_ids, list) or not task_ids:
         raise SFTTrainingError("SFT dataset report must list task ids")
@@ -283,6 +297,9 @@ def _validate_sft_example(
     example: Any,
     line_number: int,
     allowed_task_ids: set[str],
+    *,
+    dataset_schema: str,
+    prompt_version: str,
 ) -> None:
     if not isinstance(example, dict) or example.get("schema_version") != 1:
         raise SFTTrainingError(f"invalid SFT schema on row {line_number}")
@@ -292,7 +309,7 @@ def _validate_sft_example(
         raise SFTTrainingError(f"SFT row {line_number} does not declare contains_answers=true")
     if example.get("answer_source") != "official_swe_gym_gold_patch":
         raise SFTTrainingError(f"SFT row {line_number} has an unsupported answer source")
-    if example.get("prompt_version") != PROMPT_VERSION:
+    if example.get("prompt_version") != prompt_version:
         raise SFTTrainingError(f"SFT row {line_number} has a stale prompt version")
     example_id = example.get("example_id")
     if not isinstance(example_id, str) or not example_id:
@@ -309,12 +326,30 @@ def _validate_sft_example(
     target_action = example.get("target_action")
     if not isinstance(target_action, dict):
         raise SFTTrainingError(f"SFT row {line_number} has no target action")
-    try:
-        parsed = OpenAICompatiblePolicy._parse_action(messages[-1]["content"])
-    except ValueError as exc:
-        raise SFTTrainingError(f"SFT row {line_number} has an invalid assistant action") from exc
-    if parsed.to_dict() != target_action:
-        raise SFTTrainingError(f"SFT row {line_number} assistant content disagrees with target action")
+    if dataset_schema == GRPO_SFT_SCHEMA:
+        if example.get("action_protocol") != GRPO_ACTION_PROTOCOL:
+            raise SFTTrainingError(f"SFT row {line_number} has an unsupported action protocol")
+        try:
+            tool_call = json.loads(messages[-1]["content"])
+        except json.JSONDecodeError as exc:
+            raise SFTTrainingError(f"SFT row {line_number} has an invalid assistant action") from exc
+        expected = {
+            "name": target_action.get("kind"),
+            "arguments": target_action.get("arguments", {}),
+        }
+        if tool_call != expected or example.get("target_tool_call") != expected:
+            raise SFTTrainingError(
+                f"SFT row {line_number} assistant content disagrees with target action"
+            )
+    else:
+        try:
+            parsed = OpenAICompatiblePolicy._parse_action(messages[-1]["content"])
+        except ValueError as exc:
+            raise SFTTrainingError(f"SFT row {line_number} has an invalid assistant action") from exc
+        if parsed.to_dict() != target_action:
+            raise SFTTrainingError(
+                f"SFT row {line_number} assistant content disagrees with target action"
+            )
 
 
 def _load_json_object(path: Path, label: str) -> dict[str, Any]:

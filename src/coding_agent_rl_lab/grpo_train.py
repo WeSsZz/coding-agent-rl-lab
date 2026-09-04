@@ -67,6 +67,10 @@ def build_parser() -> argparse.ArgumentParser:
         description="Preflight or run single-GPU LoRA GRPO against the remote Docker worker"
     )
     parser.add_argument("--model-path", required=True)
+    parser.add_argument(
+        "--adapter-path",
+        help="Optional trainable SFT LoRA adapter used to initialize GRPO.",
+    )
     parser.add_argument("--prompt-rows", required=True)
     parser.add_argument("--worker-token-file", required=True)
     parser.add_argument("--worker-base-url", default="http://127.0.0.1:9010")
@@ -105,6 +109,9 @@ def main() -> None:
     model_path = Path(args.model_path).resolve()
     if not model_path.is_dir():
         raise SystemExit(f"model path is not a directory: {model_path}")
+    adapter_path = Path(args.adapter_path).resolve() if args.adapter_path else None
+    if adapter_path is not None and not adapter_path.is_dir():
+        raise SystemExit(f"adapter path is not a directory: {adapter_path}")
     rows = configure_prompt_rows_tool_format(
         load_prompt_rows(Path(args.prompt_rows), limit=args.task_count),
         bare_json_tool_calls=args.bare_json_tool_calls,
@@ -116,8 +123,8 @@ def main() -> None:
         import torch
         import transformers
         import trl
-        from peft import LoraConfig
-        from transformers import AutoTokenizer
+        from peft import LoraConfig, PeftModel
+        from transformers import AutoModelForCausalLM, AutoTokenizer
         from trl import GRPOConfig, GRPOTrainer
         from trl.chat_template_utils import supports_tool_calling
     except ImportError as exc:
@@ -164,6 +171,7 @@ def main() -> None:
     report: dict[str, Any] = {
         "schema_version": 1,
         "model_path": str(model_path),
+        "initial_adapter_path": str(adapter_path) if adapter_path is not None else None,
         "task_count": len(rows),
         "torch_version": torch.__version__,
         "transformers_version": transformers.__version__,
@@ -196,11 +204,15 @@ def main() -> None:
         bf16=True,
         gradient_checkpointing=True,
         use_cache=False,
-        model_init_kwargs={
-            "dtype": "bfloat16",
-            "local_files_only": True,
-            "trust_remote_code": False,
-        },
+        model_init_kwargs=(
+            None
+            if adapter_path is not None
+            else {
+                "dtype": "bfloat16",
+                "local_files_only": True,
+                "trust_remote_code": False,
+            }
+        ),
         num_generations=args.num_generations,
         generation_batch_size=args.num_generations,
         max_completion_length=args.max_completion_length,
@@ -216,7 +228,8 @@ def main() -> None:
         report_to="none",
         seed=args.seed,
     )
-    peft_config = LoraConfig(
+    trainer_model: Any = str(model_path)
+    peft_config: LoraConfig | None = LoraConfig(
         r=16,
         lora_alpha=32,
         lora_dropout=0.05,
@@ -224,8 +237,21 @@ def main() -> None:
         task_type="CAUSAL_LM",
         target_modules="all-linear",
     )
+    if adapter_path is not None:
+        base_model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            dtype="bfloat16",
+            local_files_only=True,
+            trust_remote_code=False,
+        )
+        trainer_model = PeftModel.from_pretrained(
+            base_model,
+            adapter_path,
+            is_trainable=True,
+        )
+        peft_config = None
     trainer = GRPOTrainer(
-        model=str(model_path),
+        model=trainer_model,
         reward_funcs=None,
         args=training_args,
         train_dataset=Dataset.from_list(rows),

@@ -10,6 +10,7 @@ from pathlib import Path
 from coding_agent_rl_lab.grpo_train import (
     GRPOTrainingError,
     _metric_number,
+    build_parser,
     configure_prompt_rows_tool_format,
     configure_tool_response_parsing,
     is_valid_bare_json_tool_probe,
@@ -21,6 +22,22 @@ from coding_agent_rl_lab.grpo_train import (
 
 
 class GRPOTrainTests(unittest.TestCase):
+    def test_parser_accepts_sft_adapter_initialization(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--model-path",
+                "/models/base",
+                "--adapter-path",
+                "/models/adapter",
+                "--prompt-rows",
+                "prompts.jsonl",
+                "--worker-token-file",
+                "token",
+            ]
+        )
+
+        self.assertEqual(args.adapter_path, "/models/adapter")
+
     def test_load_prompt_rows_validates_and_limits(self) -> None:
         rows = [
             {

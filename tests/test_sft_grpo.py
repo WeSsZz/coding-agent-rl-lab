@@ -32,12 +32,18 @@ class GRPOSFTTests(unittest.TestCase):
                     "role": "user",
                     "content": json.dumps(
                         {
+                            "task_id": task_id,
+                            "issue": "Fix the source behavior.",
+                            "base_commit": "abc123",
+                            "repository": {"repo": "getmoto/moto", "version": "5.0"},
+                            "initial_observation": "Baseline verifier result:\nFAILED",
                             "history": [
                                 {
                                     "action": {
                                         "kind": "read_file",
                                         "arguments": {"path": "moto/models.py"},
-                                    }
+                                    },
+                                    "observation": "source context",
                                 }
                             ]
                         }
@@ -71,8 +77,17 @@ class GRPOSFTTests(unittest.TestCase):
         self.assertEqual(converted_report["prompt_version"], GRPO_SFT_PROMPT_VERSION)
         self.assertEqual(converted[0]["target_tool_call"]["name"], "replace_text")
         self.assertNotIn('"kind"', converted[0]["messages"][-1]["content"])
-        user = json.loads(converted[0]["messages"][1]["content"])
-        self.assertEqual(user["history"][0]["action"]["name"], "read_file")
+        self.assertEqual(
+            [message["role"] for message in converted[0]["messages"]],
+            ["system", "user", "assistant", "tool", "assistant"],
+        )
+        self.assertTrue(
+            converted[0]["messages"][1]["content"].endswith(
+                "Baseline verifier result:\nFAILED"
+            )
+        )
+        self.assertEqual(converted[0]["messages"][3]["name"], "read_file")
+        self.assertEqual(converted[0]["messages"][3]["content"], "source context")
 
         with tempfile.TemporaryDirectory() as directory:
             dataset_path = Path(directory, "dataset.jsonl")

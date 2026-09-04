@@ -34,6 +34,16 @@ Replace the example name and arguments with the selected provided tool. Never us
 <tool_call> tags, a "kind" field, or natural-language explanation."""
 
 
+def bare_json_system_prompt(system_prompt: str) -> str:
+    """Return the exact system prompt used by bare-JSON GRPO rollouts."""
+
+    marker = "\nEvery assistant turn"
+    prefix, separator, _ = system_prompt.partition(marker)
+    if not separator:
+        prefix = system_prompt.rstrip()
+    return prefix.rstrip() + "\n\n" + _BARE_JSON_TOOL_CALL_INSTRUCTION
+
+
 def load_prompt_rows(path: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with path.open(encoding="utf-8") as stream:
@@ -376,15 +386,11 @@ def configure_prompt_rows_tool_format(
     configured = copy.deepcopy(rows)
     if not bare_json_tool_calls:
         return configured
-    marker = "\nEvery assistant turn"
     for row in configured:
         for message in row["prompt"]:
             if message["role"] != "system":
                 continue
-            prefix, separator, _ = message["content"].partition(marker)
-            if not separator:
-                prefix = message["content"].rstrip()
-            message["content"] = prefix.rstrip() + "\n\n" + _BARE_JSON_TOOL_CALL_INSTRUCTION
+            message["content"] = bare_json_system_prompt(message["content"])
     return configured
 
 

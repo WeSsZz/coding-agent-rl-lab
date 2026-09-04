@@ -7,22 +7,16 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import AgentAction
+from .grpo_environment import _GRPO_SYSTEM_PROMPT
+from .grpo_train import bare_json_system_prompt
 from .swe_gym_smoke import pinned_rows_for_task_set
 
 
-GRPO_SFT_SCHEMA = "coding-agent-grpo-gold-sft-v1"
-GRPO_SFT_PROMPT_VERSION = "grpo-tools-bare-json-v1"
+GRPO_SFT_SCHEMA = "coding-agent-grpo-gold-sft-v2"
+GRPO_SFT_PROMPT_VERSION = "grpo-tools-dynamic-bare-json-v2"
 GRPO_ACTION_PROTOCOL = "grpo-bare-json"
 
-_SYSTEM_PROMPT = """You are a coding agent in a restricted repository environment.
-Use the provided tools to inspect the failing behavior, make the smallest relevant source change,
-and run the verifier. Never modify tests or escape the repository. Stop only after using finish.
-Tool errors are observations: change strategy instead of repeating an unchanged action.
-
-Return exactly one bare JSON tool call and no prose or tags:
-{"name":"search_text","arguments":{"query":"literal identifier"}}
-Allowed names are list_files, search_text, read_file, replace_text, run_tests, and finish.
-Never use Markdown fences, <tool_call> tags, or a "kind" field."""
+_SYSTEM_PROMPT = bare_json_system_prompt(_GRPO_SYSTEM_PROMPT)
 
 
 class GRPOSFTConversionError(ValueError):
@@ -55,9 +49,9 @@ def convert_sft_dataset(
             raise GRPOSFTConversionError(f"source SFT row {index} has invalid action context") from exc
         if not isinstance(user_payload, dict):
             raise GRPOSFTConversionError(f"source SFT row {index} user context must be an object")
-        _convert_history_actions(user_payload)
         tool_call = {"name": action.kind.value, "arguments": action.arguments}
         target_text = json.dumps(tool_call, ensure_ascii=False, separators=(",", ":"))
+        dynamic_messages = _dynamic_tool_messages(user_payload, target_text)
         identity = f"{example.get('example_id', index)}\0{target_text}"
         converted.append(
             {
@@ -66,14 +60,7 @@ def convert_sft_dataset(
                 + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20],
                 "prompt_version": GRPO_SFT_PROMPT_VERSION,
                 "action_protocol": GRPO_ACTION_PROTOCOL,
-                "messages": [
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": json.dumps(user_payload, ensure_ascii=False),
-                    },
-                    {"role": "assistant", "content": target_text},
-                ],
+                "messages": dynamic_messages,
                 "target_tool_call": tool_call,
             }
         )
@@ -99,11 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input-report", required=True)
     parser.add_argument(
         "--output",
-        default="work/private/swe-gym-train-gold-grpo-sft-v1.jsonl",
+        default="work/private/swe-gym-train-gold-grpo-sft-v2.jsonl",
     )
     parser.add_argument(
         "--report",
-        default="work/private/swe-gym-train-gold-grpo-sft-v1-report.json",
+        default="work/private/swe-gym-train-gold-grpo-sft-v2-report.json",
     )
     return parser
 
@@ -136,19 +123,49 @@ def _validate_source_report(report: dict[str, Any]) -> None:
         raise GRPOSFTConversionError("source report is not audited train-only gold SFT data")
 
 
-def _convert_history_actions(value: Any) -> None:
-    if isinstance(value, dict):
-        action = value.get("action")
-        if isinstance(action, dict) and isinstance(action.get("kind"), str):
-            value["action"] = {
-                "name": action["kind"],
-                "arguments": dict(action.get("arguments", {})),
-            }
-        for child in value.values():
-            _convert_history_actions(child)
-    elif isinstance(value, list):
-        for child in value:
-            _convert_history_actions(child)
+def _dynamic_tool_messages(user_payload: dict[str, Any], target_text: str) -> list[dict[str, Any]]:
+    required = ("task_id", "issue", "base_commit", "repository", "initial_observation", "history")
+    if any(key not in user_payload for key in required):
+        raise GRPOSFTConversionError("source SFT user context is incomplete")
+    if not isinstance(user_payload["initial_observation"], str) or not isinstance(
+        user_payload["history"], list
+    ):
+        raise GRPOSFTConversionError("source SFT user context has invalid observation history")
+    task_payload = {
+        key: user_payload[key]
+        for key in ("task_id", "issue", "base_commit", "repository")
+    }
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": json.dumps(task_payload, ensure_ascii=False)
+            + user_payload["initial_observation"],
+        },
+    ]
+    for step in user_payload["history"]:
+        if not isinstance(step, dict) or not isinstance(step.get("observation"), str):
+            raise GRPOSFTConversionError("source SFT history step is invalid")
+        try:
+            action = AgentAction.from_dict(step["action"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise GRPOSFTConversionError("source SFT history action is invalid") from exc
+        tool_call = {"name": action.kind.value, "arguments": action.arguments}
+        messages.extend(
+            (
+                {
+                    "role": "assistant",
+                    "content": json.dumps(tool_call, ensure_ascii=False, separators=(",", ":")),
+                },
+                {
+                    "role": "tool",
+                    "name": action.kind.value,
+                    "content": step["observation"],
+                },
+            )
+        )
+    messages.append({"role": "assistant", "content": target_text})
+    return messages
 
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:

@@ -315,12 +315,9 @@ def _validate_sft_example(
     if not isinstance(example_id, str) or not example_id:
         raise SFTTrainingError(f"SFT row {line_number} has no example_id")
     messages = example.get("messages")
-    if (
-        not isinstance(messages, list)
-        or len(messages) != 3
-        or [message.get("role") for message in messages if isinstance(message, dict)]
-        != ["system", "user", "assistant"]
-        or any(not isinstance(message.get("content"), str) for message in messages)
+    if not isinstance(messages, list) or any(
+        not isinstance(message, dict) or not isinstance(message.get("content"), str)
+        for message in messages
     ):
         raise SFTTrainingError(f"SFT row {line_number} has invalid conversational messages")
     target_action = example.get("target_action")
@@ -329,6 +326,27 @@ def _validate_sft_example(
     if dataset_schema == GRPO_SFT_SCHEMA:
         if example.get("action_protocol") != GRPO_ACTION_PROTOCOL:
             raise SFTTrainingError(f"SFT row {line_number} has an unsupported action protocol")
+        roles = [message["role"] for message in messages]
+        expected_roles = ["system", "user"] + ["assistant", "tool"] * ((len(messages) - 3) // 2) + [
+            "assistant"
+        ]
+        if len(messages) < 3 or len(messages) % 2 == 0 or roles != expected_roles:
+            raise SFTTrainingError(f"SFT row {line_number} has invalid dynamic tool messages")
+        for assistant, tool in zip(messages[2:-1:2], messages[3:-1:2], strict=True):
+            try:
+                prior_call = json.loads(assistant["content"])
+            except json.JSONDecodeError as exc:
+                raise SFTTrainingError(
+                    f"SFT row {line_number} has an invalid history action"
+                ) from exc
+            if (
+                not isinstance(prior_call, dict)
+                or prior_call.get("name") != tool.get("name")
+                or not isinstance(prior_call.get("arguments"), dict)
+            ):
+                raise SFTTrainingError(
+                    f"SFT row {line_number} history action disagrees with tool result"
+                )
         try:
             tool_call = json.loads(messages[-1]["content"])
         except json.JSONDecodeError as exc:
@@ -342,6 +360,12 @@ def _validate_sft_example(
                 f"SFT row {line_number} assistant content disagrees with target action"
             )
     else:
+        if len(messages) != 3 or [message["role"] for message in messages] != [
+            "system",
+            "user",
+            "assistant",
+        ]:
+            raise SFTTrainingError(f"SFT row {line_number} has invalid conversational messages")
         try:
             parsed = OpenAICompatiblePolicy._parse_action(messages[-1]["content"])
         except ValueError as exc:

@@ -288,6 +288,23 @@ else:
         "assert n == 1, f'replace_text requires exactly one match, found {n}'; "
         "p.write_text(s.replace(old,new,1), encoding='utf-8')"
     )
+    _REPLACE_LINES_SCRIPT = """
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+start_line = int(sys.argv[2])
+end_line = int(sys.argv[3])
+new = sys.argv[4]
+content = path.read_text(encoding='utf-8')
+lines = content.splitlines(keepends=True)
+if end_line > len(lines):
+    raise ValueError(f'replace_lines end_line {end_line} exceeds file length {len(lines)}')
+selected = ''.join(lines[start_line - 1:end_line])
+if new and selected.endswith('\\n') and not new.endswith(('\\n', '\\r')):
+    new += '\\n'
+path.write_text(''.join(lines[:start_line - 1]) + new + ''.join(lines[end_line:]), encoding='utf-8')
+""".strip()
     _PATCH_VALID_SCRIPT = """
 from pathlib import Path
 import sys
@@ -314,6 +331,7 @@ for raw in sys.argv[1:]:
         self.violations: list[str] = []
         self._changed_files: set[str] = set()
         self._protected_files: set[str] = set()
+        self._read_files: set[str] = set()
         self._action_loop_guard = ActionLoopGuard()
 
     def reset(self, task: CodingTask) -> str:
@@ -325,6 +343,7 @@ for raw in sys.argv[1:]:
         self.steps = 0
         self.tool_calls = 0
         self.violations = []
+        self._read_files = set()
         self._action_loop_guard.reset()
         try:
             started = self.runner.run(
@@ -396,6 +415,7 @@ for raw in sys.argv[1:]:
                     command = (*command, str(line_range[0]), str(line_range[1]))
                 result = self._exec(command)
                 self._require_command(result, "read_file")
+                self._read_files.add(path)
                 step_result = StepResult(result.stdout[-self.config.max_output_chars :], False)
             elif action.kind is ActionKind.REPLACE_TEXT:
                 path = self._safe_relative_path(action.arguments.get("path"))
@@ -406,6 +426,42 @@ for raw in sys.argv[1:]:
                 result = self._exec(("python", "-c", self._REPLACE_TEXT_SCRIPT, path, old, new))
                 self._require_command(result, "replace_text")
                 self._changed_files.add(path)
+                self._read_files.discard(path)
+                step_result = StepResult(f"Updated {path}.", False)
+            elif action.kind is ActionKind.REPLACE_LINES:
+                path = self._safe_relative_path(action.arguments.get("path"))
+                if path in self._protected_files:
+                    raise EnvironmentError(f"cannot modify verifier-owned test file: {path}")
+                if path not in self._read_files:
+                    raise ToolError("replace_lines requires reading the target file first")
+                start_line = action.arguments.get("start_line")
+                end_line = action.arguments.get("end_line")
+                if (
+                    isinstance(start_line, bool)
+                    or isinstance(end_line, bool)
+                    or not isinstance(start_line, int)
+                    or not isinstance(end_line, int)
+                ):
+                    raise ToolError("replace_lines line ranges must be integers")
+                if start_line < 1 or end_line < start_line:
+                    raise ToolError("replace_lines requires 1 <= start_line <= end_line")
+                if end_line - start_line + 1 > 80:
+                    raise ToolError("replace_lines cannot replace more than 80 lines")
+                new = self._required_string(action.arguments, "new", allow_empty=True)
+                result = self._exec(
+                    (
+                        "python",
+                        "-c",
+                        self._REPLACE_LINES_SCRIPT,
+                        path,
+                        str(start_line),
+                        str(end_line),
+                        new,
+                    )
+                )
+                self._require_command(result, "replace_lines")
+                self._changed_files.add(path)
+                self._read_files.discard(path)
                 step_result = StepResult(f"Updated {path}.", False)
             elif action.kind is ActionKind.RUN_TESTS:
                 result = self._run_tests()
@@ -460,6 +516,7 @@ for raw in sys.argv[1:]:
         self.last_test_result = None
         self._changed_files = set()
         self._protected_files = set()
+        self._read_files = set()
         self._action_loop_guard.reset()
 
     def __enter__(self) -> DockerSandboxEnvironment:

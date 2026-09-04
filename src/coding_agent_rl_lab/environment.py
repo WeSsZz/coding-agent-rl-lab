@@ -67,6 +67,38 @@ def select_line_range(content: str, line_range: tuple[int, int] | None) -> str:
     return "".join(content.splitlines(keepends=True)[start_line - 1 : end_line])
 
 
+def replace_line_range(
+    content: str,
+    *,
+    start_line: int,
+    end_line: int,
+    new: str,
+) -> str:
+    """Replace a small inclusive one-based line range while preserving its final newline."""
+
+    if isinstance(start_line, bool) or isinstance(end_line, bool):
+        raise ToolError("replace_lines line ranges must be integers")
+    if not isinstance(start_line, int) or not isinstance(end_line, int):
+        raise ToolError("replace_lines line ranges must be integers")
+    if start_line < 1 or end_line < start_line:
+        raise ToolError("replace_lines requires 1 <= start_line <= end_line")
+    if end_line - start_line + 1 > 80:
+        raise ToolError("replace_lines cannot replace more than 80 lines")
+    if not isinstance(new, str):
+        raise ToolError("new must be a string")
+
+    lines = content.splitlines(keepends=True)
+    if end_line > len(lines):
+        raise ToolError(
+            f"replace_lines end_line {end_line} exceeds file length {len(lines)}"
+        )
+    selected = "".join(lines[start_line - 1 : end_line])
+    replacement = new
+    if replacement and selected.endswith("\n") and not replacement.endswith(("\n", "\r")):
+        replacement += "\n"
+    return "".join(lines[: start_line - 1]) + replacement + "".join(lines[end_line:])
+
+
 class ActionLoopGuard:
     """Reject unproductive repeated tool calls as recoverable observations."""
 
@@ -99,7 +131,7 @@ class ActionLoopGuard:
             if previous_reads:
                 path = action.arguments.get("path")
                 changed_after_read = any(
-                    previous.kind is ActionKind.REPLACE_TEXT
+                    previous.kind in {ActionKind.REPLACE_TEXT, ActionKind.REPLACE_LINES}
                     and previous.arguments.get("path") == path
                     and observation.startswith("Updated ")
                     for previous, observation in self._records[previous_reads[-1] + 1 :]
@@ -148,6 +180,7 @@ class LocalFixtureEnvironment:
         self.tool_calls = 0
         self.violations: list[str] = []
         self._initial_hashes: dict[str, str] = {}
+        self._read_files: set[str] = set()
         self._action_loop_guard = ActionLoopGuard()
 
     def reset(self, task: CodingTask) -> str:
@@ -166,6 +199,7 @@ class LocalFixtureEnvironment:
         self.tool_calls = 0
         self.violations = []
         self._action_loop_guard.reset()
+        self._read_files = set()
         self._initial_hashes = self._file_hashes()
         self.baseline_result = self.verifier.run(self.repository, task.test_command)
         self.last_test_result = self.baseline_result
@@ -242,6 +276,7 @@ class LocalFixtureEnvironment:
                 path = self._resolve_repository_path(action.arguments.get("path"))
                 content = path.read_text(encoding="utf-8")
                 content = select_line_range(content, read_line_range(action.arguments))
+                self._read_files.add(path.relative_to(repository).as_posix())
                 result = StepResult(content[:20_000], False)
             elif action.kind is ActionKind.REPLACE_TEXT:
                 path = self._resolve_repository_path(action.arguments.get("path"))
@@ -252,7 +287,24 @@ class LocalFixtureEnvironment:
                 if occurrences != 1:
                     raise ToolError(f"replace_text requires exactly one match, found {occurrences}")
                 path.write_text(content.replace(old, new, 1), encoding="utf-8")
+                self._read_files.discard(path.relative_to(repository).as_posix())
                 result = StepResult(f"Updated {path.relative_to(repository)}.", False)
+            elif action.kind is ActionKind.REPLACE_LINES:
+                path = self._resolve_repository_path(action.arguments.get("path"))
+                relative = path.relative_to(repository).as_posix()
+                if relative not in self._read_files:
+                    raise ToolError("replace_lines requires reading the target file first")
+                new = self._required_string(action.arguments, "new", allow_empty=True)
+                content = path.read_text(encoding="utf-8")
+                updated = replace_line_range(
+                    content,
+                    start_line=action.arguments.get("start_line"),
+                    end_line=action.arguments.get("end_line"),
+                    new=new,
+                )
+                path.write_text(updated, encoding="utf-8")
+                self._read_files.discard(relative)
+                result = StepResult(f"Updated {relative}.", False)
             elif action.kind is ActionKind.RUN_TESTS:
                 result = self.verifier.run(repository, task.test_command)
                 self.last_test_result = result
@@ -311,6 +363,7 @@ class LocalFixtureEnvironment:
         self.baseline_result = None
         self.last_test_result = None
         self._initial_hashes = {}
+        self._read_files = set()
         self._action_loop_guard.reset()
 
     def __enter__(self) -> LocalFixtureEnvironment:

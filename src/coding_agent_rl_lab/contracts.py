@@ -16,6 +16,7 @@ class ActionKind(str, Enum):
     SEARCH_TEXT = "search_text"
     READ_FILE = "read_file"
     REPLACE_TEXT = "replace_text"
+    REPLACE_LINES = "replace_lines"
     RUN_TESTS = "run_tests"
     FINISH = "finish"
 

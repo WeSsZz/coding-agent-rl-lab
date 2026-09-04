@@ -50,6 +50,21 @@ class GRPORemoteTests(unittest.TestCase):
         self.assertEqual(environment.reward, 1.0)
         self.assertEqual(environment.get_reward(), 1.0)
 
+    def test_remote_environment_can_replace_a_previously_read_line_range(self) -> None:
+        environment = RemoteGRPOCodingEnvironment(self.base_url, self.token)
+        environment.reset(task_id="clamp-negative-values")
+        environment.read_file("values.py")
+        updated = environment.replace_lines(
+            "values.py",
+            4,
+            4,
+            "    return max(0, value)",
+        )
+
+        self.assertEqual(updated, "Updated values.py.")
+        self.assertIn("OK", environment.finish())
+        self.assertEqual(environment.reward, 1.0)
+
     def test_remote_environment_returns_small_reward_for_verified_valid_patch(self) -> None:
         environment = RemoteGRPOCodingEnvironment(self.base_url, self.token)
         environment.reset(task_id="clamp-negative-values")

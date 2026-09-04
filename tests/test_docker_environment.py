@@ -129,6 +129,46 @@ class DockerEnvironmentTests(unittest.TestCase):
         finally:
             environment.close()
 
+    def test_replace_lines_requires_read_and_updates_source(self) -> None:
+        runner = FakeDockerRunner(self.base_commit)
+        environment = DockerSandboxEnvironment(self.spec, DockerSandboxConfig(), runner)
+        try:
+            environment.reset(self.task)
+            action = AgentAction(
+                ActionKind.REPLACE_LINES,
+                {"path": "src/bug.py", "start_line": 7, "end_line": 7, "new": "return True"},
+            )
+            unread = environment.step(action)
+            environment.step(AgentAction(ActionKind.READ_FILE, {"path": "src/bug.py"}))
+            replaced = environment.step(action)
+
+            self.assertIn("requires reading the target file first", unread.observation)
+            self.assertEqual(replaced.observation, "Updated src/bug.py.")
+            self.assertEqual(environment.changed_files(), ("src/bug.py",))
+        finally:
+            environment.close()
+
+    def test_replace_lines_cannot_modify_verifier_owned_files(self) -> None:
+        runner = FakeDockerRunner(self.base_commit)
+        environment = DockerSandboxEnvironment(self.spec, DockerSandboxConfig(), runner)
+        try:
+            environment.reset(self.task)
+            environment.step(AgentAction(ActionKind.READ_FILE, {"path": "tests/test_bug.py"}))
+            result = environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_LINES,
+                    {"path": "tests/test_bug.py", "start_line": 1, "end_line": 1, "new": "pass"},
+                )
+            )
+
+            self.assertTrue(result.terminated)
+            self.assertEqual(
+                result.violation,
+                "invalid_action:replace_lines:protected_test_file",
+            )
+        finally:
+            environment.close()
+
     def test_timed_out_test_action_terminates_the_episode(self) -> None:
         runner = FakeDockerRunner(self.base_commit)
         runner.timed_out_test_runs.add(2)
@@ -296,6 +336,30 @@ class DockerEnvironmentTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "two\nthree\n")
+
+    def test_replace_lines_script_preserves_the_selected_block_newline(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "example.py")
+            path.write_text("one\ntwo\nthree\n", encoding="utf-8")
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-c",
+                    DockerSandboxEnvironment._REPLACE_LINES_SCRIPT,
+                    "example.py",
+                    "2",
+                    "2",
+                    "replacement",
+                ),
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            updated = path.read_text(encoding="utf-8")
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(updated, "one\nreplacement\nthree\n")
 
     def test_search_text_ranks_source_before_tests_and_docs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

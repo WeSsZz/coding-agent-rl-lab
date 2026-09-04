@@ -12,16 +12,16 @@ Coding Task → Isolated Environment → Agent Rollout
 
 ## 当前阶段：M1.3 模型 rollout 与单步 GRPO 机制验证
 
-当前版本已执行首个具有非零梯度的单步 LoRA GRPO 更新，并完成固定 held-out 上的
-基座/fixture-LoRA 对照；两者均为零成功，因此不宣称已经证明 Agentic RL 提升。M0、M1.1、M1.2a 与
-M1.2b 已完成；SWE-Gym task 映射、Docker 环境生命周期、不含答案的真实模型 rollout、
-远程 GRPO preflight 和可信 fixture 课程的单步更新均已打通：
+当前版本已执行首个具有非零梯度的 fixture 单步 LoRA GRPO 更新，并完成固定 held-out 上的
+基座/fixture-LoRA 对照；两者均为零成功，因此不宣称已经证明 Agentic RL 提升。真实 SWE-Gym
+路径已打通 train-only gold SFT warm-start、分层训练奖励、远程 verifier、多轮工具 rollout 和
+显存可控的 GRPO microbatch；当前真实任务仍是组内全零奖励，瓶颈已定位到编辑动作而非训练 OOM：
 
 - `CodingTask`：issue、仓库快照、测试命令、split 与 provenance；
 - `Trajectory`：每一步 action、observation、tool result 和版本信息；
 - `RewardVector`：测试、回归、补丁、成本与安全违规；
 - `PolicyManifest`：策略、模型、训练数据和版本；
-- 受限本地代码环境：只允许列文件、读文件、精确文本替换和执行受控测试；
+- 受限代码环境：只允许列/搜/读文件、精确文本替换、已读源码的小范围行替换和受控测试；
 - 可执行测试 Verifier，不使用 LLM judge 代替环境真实状态；
 - `noop` 失败基线与 `reference` 基础设施自检策略；
 - 多次 Trial、`pass@1`、`pass^3` 和 fully-reliable task rate；
@@ -249,19 +249,18 @@ PYTHONPATH=src /root/autodl-tmp/grpo-env/bin/python \
 添加 `--bare-json-tool-calls`。该模式不改变 chat template，只为 Transformers 设置对应的
 response parser，并在任何权重加载或更新前运行固定解析探针，探针失败时直接退出。
 
-首个真实 SWE-Gym preflight 已全部通过，但当前真实课程仍未发现非零 verifier 奖励。为避免在组内
-reward 全相同时浪费 GPU，项目先建立了两个无答案可信 fixture：8 条基线采样为 4 成功、
-4 失败，无协议违规。RTX 5090 上的 seed `41003` 单步实验得到 `reward=0.5`、
-`reward_std=0.7071`、`grad_norm=0.1464`、`train_loss=0.1762`，并保存了独立 LoRA adapter。
-这证明真实 environment/tool/verifier/reward/optimizer 闭环可以产生有效更新。固定的两个
-held-out 任务随后以相同 seed 各运行 4 次：基座与 fixture-LoRA 都是 0/8；LoRA 有一条源码
-修改轨迹导致 verifier 超时，不能视为提升。训练课程首题 `getmoto__moto-7509` 的 4 个种子
-也均为零奖励，虽然其中 2 条产生了源码修改。随后 v9 对其余 5 个 train 任务各采样 2 次，
-10 条均无补丁；v11 在 `moto-7509` 的 4 条中让 3 条使用局部范围读取，并产生 1 条实际补丁，
-但 verifier 未通过；v12 对全部 6 个 train 任务各采样 1 次，共产生 15 次范围读取但仍无补丁。
-这些运行均无协议、上下文或安全违规，但最终 verifier reward 仍全零，因此没有执行真实
-SWE-Gym GRPO。下一步不再盲目增加同分布采样，而是建立仅使用 train split、经审计的工具调用
-warm-start（SFT/rejection-sampling）或更强的基础策略，先获得可验证的 0/1 混合奖励，再启动 GRPO。
+首个真实 SWE-Gym preflight 已全部通过。项目先用两个无答案可信 fixture 验证闭环：RTX 5090
+上的 seed `41003` 单步实验得到 `reward=0.5`、`reward_std=0.7071`、`grad_norm=0.1464`，并保存
+独立 LoRA adapter。固定 held-out 的基座/fixture-LoRA 对照仍是 0/8，不能视为能力提升。
+
+随后只用六个 train task 的官方 gold patch 构造 204 条多轮、completion-only SFT 样本；动态工具
+协议的 60-step adapter 最终 SFT loss 为 `0.0752`。真实 `moto-7509` 的 2-generation、4096-token
+GRPO smoke 曾在 backward OOM；将 generation batch 保持为 2、训练 microbatch 降为 1 后，完整
+1-step 在 249.9 秒内结束且不再 OOM。该步仍为 `reward=[0,0]`、`grad_norm=0`：脱敏审计显示
+两条轨迹共 4 次 `replace_text`，其中 3 次无精确匹配、1 次参数错误，未产生补丁。环境因此新增
+`replace_lines` 作为受控恢复路径：只允许修改已读取的源码、一次最多 80 行、编辑后行号立即失效，
+且继续禁止修改 verifier-owned 测试。下一实验应先验证该编辑路径能否产生有效补丁和分层奖励，
+而不是继续扩大同分布全零采样。
 
 ## SWE-Gym 数据边界
 

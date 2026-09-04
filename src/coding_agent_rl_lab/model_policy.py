@@ -19,7 +19,7 @@ from .contracts import (
 )
 
 
-PROMPT_VERSION = "coding-tools-json-v13"
+PROMPT_VERSION = "coding-tools-json-v14"
 
 
 class ModelTransportError(RuntimeError):
@@ -332,6 +332,7 @@ class OpenAICompatiblePolicy:
                 ActionKind.LIST_FILES: set(),
                 ActionKind.SEARCH_TEXT: {"query"},
                 ActionKind.REPLACE_TEXT: {"path", "old", "new"},
+                ActionKind.REPLACE_LINES: {"path", "start_line", "end_line", "new"},
                 ActionKind.RUN_TESTS: set(),
                 ActionKind.FINISH: set(),
             }[action.kind]
@@ -375,6 +376,26 @@ class OpenAICompatiblePolicy:
                 raise ModelProtocolError("replace_text old must be a non-empty string")
             if not isinstance(new, str):
                 raise ModelProtocolError("replace_text new must be a string")
+        if action.kind is ActionKind.REPLACE_LINES:
+            path = action.arguments["path"]
+            start_line = action.arguments["start_line"]
+            end_line = action.arguments["end_line"]
+            new = action.arguments["new"]
+            if not isinstance(path, str) or not path:
+                raise ModelProtocolError("replace_lines path must be a non-empty string")
+            if (
+                isinstance(start_line, bool)
+                or isinstance(end_line, bool)
+                or not isinstance(start_line, int)
+                or not isinstance(end_line, int)
+            ):
+                raise ModelProtocolError("replace_lines line ranges must be integers")
+            if start_line < 1 or end_line < start_line:
+                raise ModelProtocolError("replace_lines requires 1 <= start_line <= end_line")
+            if end_line - start_line + 1 > 80:
+                raise ModelProtocolError("replace_lines cannot replace more than 80 lines")
+            if not isinstance(new, str):
+                raise ModelProtocolError("replace_lines new must be a string")
         return action
 
 
@@ -387,6 +408,7 @@ Allowed actions:
 {"kind":"read_file","arguments":{"path":"relative/path.py"}}
 {"kind":"read_file","arguments":{"path":"relative/path.py","start_line":120,"end_line":200}}
 {"kind":"replace_text","arguments":{"path":"relative/path.py","old":"exact text","new":"replacement"}}
+{"kind":"replace_lines","arguments":{"path":"relative/path.py","start_line":120,"end_line":124,"new":"replacement"}}
 {"kind":"run_tests","arguments":{}}
 {"kind":"finish","arguments":{}}
 
@@ -405,7 +427,7 @@ Rules:
 - Once search_text or read_file has located relevant files, do not call list_files.
 - Do not repeat list_files or reread an unchanged file; move from tests to implementation, or from implementation evidence to an edit.
 - After a repeated-action tool error, switch to reading a new implementation file or editing the best-supported source location; do not issue another variation of the same unproductive search.
-- Read a file before editing it and make the smallest relevant change. Keep replace_text old/new context compact (normally under 20 lines each) so the JSON response is not truncated.
+- Read a file before editing it and make the smallest relevant change. Keep replace_text old/new context compact (normally under 20 lines each) so the JSON response is not truncated. If exact matching fails, use replace_lines only on a small line range from the latest read of that file.
 - Preserve at least four tool steps for editing and verification. In a 12-step episode, normally make the first evidence-backed source edit no later than step 8 instead of spending the full budget exploring.
 - Never modify tests or verifier-owned files.
 - Run tests after editing. If they fail, treat the new traceback as the highest-priority evidence: read a 20+ line source range around its referenced implementation line, repair the patch within two tool steps, and run tests again. Do not return to broad searches.

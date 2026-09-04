@@ -52,6 +52,21 @@ class GRPOEnvironmentTests(unittest.TestCase):
         self.assertEqual(grpo_verifier_reward((environment,)), [1.0])
         self.assertEqual(environment.get_reward(), 1.0)
 
+    def test_environment_can_replace_a_previously_read_line_range(self) -> None:
+        environment = self.factory()
+        environment.reset(task_id="clamp-negative-values")
+        environment.read_file("values.py")
+        updated = environment.replace_lines(
+            "values.py",
+            4,
+            4,
+            "    return max(0, value)",
+        )
+
+        self.assertEqual(updated, "Updated values.py.")
+        self.assertIn("OK", environment.finish())
+        self.assertEqual(environment.reward, 1.0)
+
     def test_unknown_task_and_actions_before_reset_are_rejected(self) -> None:
         environment = self.factory()
 

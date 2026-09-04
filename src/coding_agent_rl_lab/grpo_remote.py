@@ -341,6 +341,30 @@ class RemoteGRPOCodingEnvironment:
         """
         return self._act(AgentAction(ActionKind.REPLACE_TEXT, {"path": path, "old": old, "new": new}))
 
+    def replace_lines(self, path: str, start_line: int, end_line: int, new: str) -> str:
+        """Replace a small line range in a source file that was already read.
+
+        Args:
+            path: Repository-relative source file path.
+            start_line: One-based first line to replace.
+            end_line: Inclusive final line to replace, at most 80 lines total.
+            new: Replacement text.
+
+        Returns:
+            The update result.
+        """
+        return self._act(
+            AgentAction(
+                ActionKind.REPLACE_LINES,
+                {
+                    "path": path,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                    "new": new,
+                },
+            )
+        )
+
     def run_tests(self) -> str:
         """Run the fixed verifier.
 

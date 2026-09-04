@@ -57,7 +57,7 @@ def classify_trajectory(trajectory: Trajectory) -> str:
     if trajectory.reward.patch_created or trajectory.changed_files:
         return "patch_failed_verifier"
     if any(
-        step.action.kind.value == "replace_text"
+        step.action.kind.value in {"replace_text", "replace_lines"}
         and step.observation.startswith("Tool error:")
         for step in trajectory.steps
     ):

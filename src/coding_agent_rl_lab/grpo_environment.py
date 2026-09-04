@@ -138,6 +138,31 @@ class GRPOCodingEnvironment:
             )
         )
 
+    def replace_lines(self, path: str, start_line: int, end_line: int, new: str) -> str:
+        """Replace a small line range in a source file that was already read.
+
+        Args:
+            path: Repository-relative source file path.
+            start_line: One-based first line to replace.
+            end_line: Inclusive final line to replace, at most 80 lines total.
+            new: Replacement text.
+
+        Returns:
+            The environment update result.
+        """
+
+        return self._act(
+            AgentAction(
+                ActionKind.REPLACE_LINES,
+                {
+                    "path": path,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                    "new": new,
+                },
+            )
+        )
+
     def run_tests(self) -> str:
         """Run the fixed verifier command after a code change.
 
@@ -217,6 +242,8 @@ _GRPO_SYSTEM_PROMPT = """You are a coding agent in a restricted repository envir
 Use the provided tools to inspect the failing behavior, make the smallest relevant source change,
 and run the verifier. Never modify tests or escape the repository. Stop only after using finish.
 Tool errors are observations: change strategy instead of repeating an unchanged action.
+Prefer replace_text for a known exact snippet. If exact matching fails, use replace_lines only on a
+small one-based line range from a file you already read, then run the verifier.
 
 Every assistant turn must contain exactly one tool call and no prose. Use this exact format:
 <tool_call>

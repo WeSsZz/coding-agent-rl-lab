@@ -32,6 +32,43 @@ class EnvironmentTests(unittest.TestCase):
             self.assertTrue(result.test_result.passed)
             self.assertEqual(environment.changed_files(), ("calculator.py",))
 
+    def test_replace_lines_updates_a_previously_read_source_range(self) -> None:
+        with LocalFixtureEnvironment(self.root) as environment:
+            environment.reset(self.task)
+            environment.step(AgentAction(ActionKind.READ_FILE, {"path": "calculator.py"}))
+            replaced = environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_LINES,
+                    {
+                        "path": "calculator.py",
+                        "start_line": 4,
+                        "end_line": 4,
+                        "new": "    return list(range(start, end + 1))",
+                    },
+                )
+            )
+            result = environment.step(AgentAction(ActionKind.RUN_TESTS))
+
+            self.assertEqual(replaced.observation, "Updated calculator.py.")
+            self.assertTrue(result.test_result.passed)
+            self.assertEqual(environment.changed_files(), ("calculator.py",))
+
+    def test_replace_lines_requires_a_fresh_read(self) -> None:
+        with LocalFixtureEnvironment(self.root) as environment:
+            environment.reset(self.task)
+            action = AgentAction(
+                ActionKind.REPLACE_LINES,
+                {"path": "calculator.py", "start_line": 4, "end_line": 4, "new": "pass"},
+            )
+
+            unread = environment.step(action)
+            environment.step(AgentAction(ActionKind.READ_FILE, {"path": "calculator.py"}))
+            environment.step(action)
+            stale = environment.step(action)
+
+            self.assertIn("requires reading the target file first", unread.observation)
+            self.assertIn("requires reading the target file first", stale.observation)
+
     def test_path_escape_is_a_hard_violation(self) -> None:
         with LocalFixtureEnvironment(self.root) as environment:
             environment.reset(self.task)

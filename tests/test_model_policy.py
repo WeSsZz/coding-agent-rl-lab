@@ -87,7 +87,7 @@ class OpenAICompatiblePolicyTests(unittest.TestCase):
         self.assertNotIn("PRIVATE-TEST-PATCH", recorded_prompt)
         self.assertNotIn("secret-token", json.dumps(policy.manifest.metadata))
         self.assertIn("test_decimal", recorded_prompt)
-        self.assertEqual(policy.manifest.metadata["prompt_version"], "coding-tools-json-v13")
+        self.assertEqual(policy.manifest.metadata["prompt_version"], "coding-tools-json-v14")
         self.assertIn("Preserve at least four tool steps", decision.input_messages[0]["content"])
 
         url, payload, headers, timeout = transport.calls[0]
@@ -153,6 +153,49 @@ class OpenAICompatiblePolicyTests(unittest.TestCase):
         self.assertEqual(decision.action.arguments["start_line"], 120)
         self.assertEqual(decision.action.arguments["end_line"], 180)
         self.assertIsNone(decision.violation)
+
+    def test_replace_lines_accepts_a_small_line_range(self) -> None:
+        transport = FakeTransport(
+            [
+                _response(
+                    '{"kind":"replace_lines","arguments":'
+                    '{"path":"moto/ec2/models/vpcs.py","start_line":120,'
+                    '"end_line":124,"new":"replacement"}}'
+                )
+            ]
+        )
+        policy = OpenAICompatiblePolicy(
+            OpenAICompatiblePolicyConfig(model="example/coder"),
+            transport=transport,
+        )
+
+        decision = policy.next_action(_task(), (), seed=19)
+
+        self.assertEqual(decision.action.kind, ActionKind.REPLACE_LINES)
+        self.assertEqual(decision.action.arguments["start_line"], 120)
+        self.assertEqual(decision.action.arguments["end_line"], 124)
+        self.assertIsNone(decision.violation)
+
+    def test_replace_lines_rejects_more_than_eighty_lines(self) -> None:
+        transport = FakeTransport(
+            [
+                _response(
+                    '{"kind":"replace_lines","arguments":'
+                    '{"path":"moto/ec2/models/vpcs.py","start_line":1,'
+                    '"end_line":81,"new":"replacement"}}'
+                )
+            ]
+        )
+        policy = OpenAICompatiblePolicy(
+            OpenAICompatiblePolicyConfig(model="example/coder", max_attempts=1),
+            transport=transport,
+        )
+
+        decision = policy.next_action(_task(), (), seed=20)
+
+        self.assertEqual(decision.action.kind, ActionKind.FINISH)
+        self.assertEqual(decision.violation, "policy_protocol_error")
+        self.assertIn("cannot replace more than 80 lines", decision.metadata["errors"][0])
 
     def test_read_file_rejects_an_oversized_line_range(self) -> None:
         transport = FakeTransport(

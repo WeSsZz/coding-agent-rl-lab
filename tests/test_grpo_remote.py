@@ -48,6 +48,20 @@ class GRPORemoteTests(unittest.TestCase):
         self.assertEqual(environment.reward, 1.0)
         self.assertEqual(environment.get_reward(), 1.0)
 
+    def test_remote_environment_returns_small_reward_for_verified_valid_patch(self) -> None:
+        environment = RemoteGRPOCodingEnvironment(self.base_url, self.token)
+        environment.reset(task_id="clamp-negative-values")
+        environment.read_file("values.py")
+        environment.replace_text(
+            "values.py",
+            "    return value\n",
+            "    return max(1, value)\n",
+        )
+        self.assertIn("FAILED", environment.finish())
+
+        self.assertEqual(environment.reward, 0.15)
+        self.assertEqual(environment.get_reward(), 0.15)
+
     def test_invalid_token_is_rejected(self) -> None:
         environment = RemoteGRPOCodingEnvironment(self.base_url, "y" * 32)
 

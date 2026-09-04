@@ -18,6 +18,7 @@ from .environment import CodingEnvironment, EnvironmentError
 from .evaluation import load_builtin_tasks
 from .grpo_environment import GRPOEnvironmentError
 from .providers import DockerSandboxProvider, EnvironmentProvider, LocalFixtureEnvironmentProvider
+from .reward_shaping import TrainingReward, build_training_reward
 from .swe_gym import SWEGymTaskAdapter, audited_swe_gym_test_command
 from .swe_gym_smoke import (
     PINNED_INSTANCE_IDS,
@@ -36,6 +37,9 @@ class GRPOWorkerError(RuntimeError):
 class _WorkerSession:
     environment: CodingEnvironment | None
     reward: float = 0.0
+    strict_reward: float = 0.0
+    reward_components: TrainingReward | None = None
+    verifier_run_after_patch: bool = False
     completed: bool = False
 
 
@@ -67,17 +71,29 @@ class GRPOWorker:
     def action(self, session_id: str, action: AgentAction) -> dict[str, Any]:
         session = self._session(session_id)
         environment = self._active_environment(session)
+        patch_existed_before_action = bool(environment.changed_files())
         try:
             result = environment.step(action)
         except EnvironmentError as exc:
             self._complete(session, None)
             raise GRPOWorkerError(str(exc)) from exc
+        if (
+            patch_existed_before_action
+            and action.kind in {ActionKind.RUN_TESTS, ActionKind.FINISH}
+        ):
+            session.verifier_run_after_patch = True
         if result.terminated:
             self._complete(session, result.test_result)
         return {
             "observation": result.observation,
             "terminated": session.completed,
             "reward": session.reward if session.completed else None,
+            "strict_reward": session.strict_reward if session.completed else None,
+            "reward_components": (
+                session.reward_components.to_dict()
+                if session.completed and session.reward_components is not None
+                else None
+            ),
         }
 
     def finalize(self, session_id: str) -> dict[str, Any]:
@@ -85,7 +101,15 @@ class GRPOWorker:
         if not session.completed:
             environment = self._active_environment(session)
             self._complete(session, environment.finalize())
-        return {"reward": session.reward}
+        return {
+            "reward": session.reward,
+            "strict_reward": session.strict_reward,
+            "reward_components": (
+                session.reward_components.to_dict()
+                if session.reward_components is not None
+                else None
+            ),
+        }
 
     def delete(self, session_id: str) -> dict[str, Any]:
         with self._lock:
@@ -120,10 +144,17 @@ class GRPOWorker:
             return
         try:
             changed_files = environment.changed_files()
-            passed = bool(test_result and test_result.passed)
-            session.reward = float(
-                passed and bool(changed_files) and not environment.violations
+            reward = build_training_reward(
+                baseline=environment.baseline_result,
+                final=test_result,
+                patch_created=bool(changed_files),
+                patch_valid=environment.patch_is_valid(),
+                verifier_run_after_patch=session.verifier_run_after_patch,
+                violations=tuple(environment.violations),
             )
+            session.reward = reward.training_reward
+            session.strict_reward = reward.strict_reward
+            session.reward_components = reward
             session.completed = True
         finally:
             environment.close()
@@ -304,10 +335,12 @@ class RemoteGRPOCodingEnvironment:
         return self._reward
 
     def get_reward(self) -> float:
-        """Return the verifier reward expected by current TRL environments.
+        """Return the deterministic shaped training reward expected by TRL.
 
         Returns:
-            One for a verified non-empty source patch, otherwise zero.
+            One for strict verifier success, a bounded partial reward for
+            verified progress, zero for no progress, or negative one for a
+            safety violation.
         """
 
         return self.reward

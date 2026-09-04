@@ -113,6 +113,8 @@ class CodingEnvironment(Protocol):
 
     def changed_files(self) -> tuple[str, ...]: ...
 
+    def patch_is_valid(self) -> bool: ...
+
     def close(self) -> None: ...
 
 
@@ -267,6 +269,23 @@ class LocalFixtureEnvironment:
         current = self._file_hashes()
         names = set(self._initial_hashes) | set(current)
         return tuple(sorted(name for name in names if self._initial_hashes.get(name) != current.get(name)))
+
+    def patch_is_valid(self) -> bool:
+        if self.repository is None:
+            return False
+        changed = self.changed_files()
+        if not changed:
+            return False
+        try:
+            for relative in changed:
+                path = self.repository / relative
+                if not path.is_file():
+                    return False
+                if path.suffix == ".py":
+                    compile(path.read_text(encoding="utf-8"), relative, "exec")
+        except (OSError, SyntaxError, UnicodeError):
+            return False
+        return True
 
     def close(self) -> None:
         if self.workspace is not None and self.workspace.exists():

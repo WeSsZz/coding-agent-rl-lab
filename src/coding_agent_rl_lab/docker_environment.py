@@ -287,6 +287,17 @@ else:
         "assert n == 1, f'replace_text requires exactly one match, found {n}'; "
         "p.write_text(s.replace(old,new,1), encoding='utf-8')"
     )
+    _PATCH_VALID_SCRIPT = """
+from pathlib import Path
+import sys
+
+for raw in sys.argv[1:]:
+    path = Path(raw)
+    if not path.is_file():
+        raise SystemExit(1)
+    if path.suffix == '.py':
+        compile(path.read_text(encoding='utf-8'), raw, 'exec')
+""".strip()
 
     def __init__(self, spec: DockerTaskSpec, config: DockerSandboxConfig, runner: CommandRunner) -> None:
         self.spec = spec
@@ -426,6 +437,13 @@ else:
 
     def changed_files(self) -> tuple[str, ...]:
         return tuple(sorted(self._changed_files))
+
+    def patch_is_valid(self) -> bool:
+        changed = self.changed_files()
+        if not changed:
+            return False
+        result = self._exec(("python", "-c", self._PATCH_VALID_SCRIPT, *changed))
+        return result.passed
 
     def close(self) -> None:
         container_name = self.container_name

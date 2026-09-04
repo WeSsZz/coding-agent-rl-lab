@@ -218,6 +218,12 @@ v12 scaffold 和预算下先评估 train/regression，最后只做一次固定 h
 通过仅绑定 loopback 的反向 SSH 隧道访问 Ubuntu Docker worker，bearer token 文件权限
 为 `0600`。真实 SWE-Gym session 创建、baseline fail、文件读取和清理的跨主机 smoke 已通过。
 
+GRPO 训练奖励与最终评测指标保持分离：评测仍只把“verifier 全通过、存在源码补丁且无违规”
+记为严格成功；训练 worker 额外计算上限为 0.5 的确定性中间奖励。失败测试数量减少最多
+贡献 0.25，没有新增失败贡献 0.10，语法有效的非空补丁在修改后主动运行 verifier
+贡献 0.10 + 0.05。无补丁、超时或未验证的补丁仍为 0，安全/越界违规为 -1，
+严格成功固定为 1。所有分量都来自 sandbox、补丁解析和 verifier 输出，不使用 LLM judge。
+
 远程 worker 只监听 `127.0.0.1`，并要求至少 32 字符的 bearer token。令牌通过环境变量
 或权限受限的 `--token-file` 提供，不能写入仓库、trajectory 或训练报告。
 

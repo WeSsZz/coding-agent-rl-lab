@@ -66,9 +66,15 @@ def build_training_reward(
     final_ids = verifier_failure_ids(final)
     baseline_count = verifier_failure_count(baseline)
     final_count = verifier_failure_count(final)
-    resolved_count = max(0, (baseline_count or 0) - (final_count or 0))
+    # A collection error or unparseable verifier output is unknown, not zero
+    # failures. Preserve a conservative audit count without inventing progress.
+    resolved_count = (
+        max(0, baseline_count - final_count)
+        if baseline_count is not None and final_count is not None
+        else 0
+    )
     new_failure_count: int | None = None
-    if baseline_ids and final is not None:
+    if baseline_ids and final is not None and (final.passed or final_ids):
         new_failure_count = len(final_ids - baseline_ids)
 
     if violations:

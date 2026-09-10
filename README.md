@@ -12,6 +12,11 @@ Coding Task → Isolated Environment → Agent Rollout
 
 ## 当前阶段：M1.3 模型 rollout 与单步 GRPO 机制验证
 
+2026-09-09 更新方向检查已按用户要求暂停并释放 GPU：SFT 完成 16 条，GRPO 完成 6 条。
+双方已配对的 6 条严格成功均为 0；GRPO 有效补丁增加但出现新增测试失败，
+regression 对照尚未完成，因此暂不扩大到多步 GRPO。
+结果、已知计数问题及恢复步骤见 [本轮实验记录](docs/adapter-direction-check-20260909.md)。
+
 当前版本已执行首个具有非零梯度的 fixture 单步 LoRA GRPO 更新，并完成固定 held-out 上的
 基座/fixture-LoRA 对照；两者均为零成功，因此不宣称已经证明 Agentic RL 提升。真实 SWE-Gym
 路径已打通 train-only gold SFT warm-start、分层训练奖励、远程 verifier、多轮工具 rollout 和

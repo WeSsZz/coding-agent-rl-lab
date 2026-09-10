@@ -22,6 +22,19 @@ def _result(*failed: str, passed: bool = False, timed_out: bool = False) -> Test
 
 
 class TrainingRewardTests(unittest.TestCase):
+    def test_unknown_final_count_does_not_claim_resolved_or_no_new_failures(self) -> None:
+        for final in (None, _result()):
+            with self.subTest(final=final):
+                reward = build_training_reward(
+                    baseline=_result("tests/test_a.py::test_a"), final=final,
+                    patch_created=True, patch_valid=False,
+                    verifier_run_after_patch=True, violations=(),
+                )
+                self.assertIsNone(reward.final_failure_count)
+                self.assertEqual(reward.resolved_failure_count, 0)
+                self.assertIsNone(reward.new_failure_count)
+                self.assertEqual(reward.training_reward, 0.0)
+
     def test_strict_success_is_one(self) -> None:
         reward = build_training_reward(
             baseline=_result("tests/test_a.py::test_a"),

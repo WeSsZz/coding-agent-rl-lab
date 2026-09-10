@@ -1,0 +1,46 @@
+{
+  "run_complete": false,
+  "stop_reason": "User requested wrap-up before usage limit",
+  "sft_completed_trials": 16,
+  "grpo_completed_trials": 6,
+  "paired_task_ids": [
+    "getmoto__moto-7509",
+    "getmoto__moto-7365",
+    "getmoto__moto-7514"
+  ],
+  "paired": {
+    "sft": {
+      "trial_count": 6,
+      "strict_successes": 0,
+      "mean_shaped_reward": 0.024999999999999998,
+      "patches_created": 3,
+      "valid_patches": 1,
+      "verified_patches": 3,
+      "trials_resolving_failures": 0,
+      "trials_with_unknown_final_failure_count": 2,
+      "trials_with_new_failures": 0,
+      "trials_with_violations": 0
+    },
+    "grpo": {
+      "trial_count": 6,
+      "strict_successes": 0,
+      "mean_shaped_reward": 0.075,
+      "patches_created": 4,
+      "valid_patches": 3,
+      "verified_patches": 4,
+      "trials_resolving_failures": 0,
+      "trials_with_unknown_final_failure_count": 1,
+      "trials_with_new_failures": 1,
+      "trials_with_violations": 0
+    }
+  },
+  "remaining_grpo_task_ids": [
+    "getmoto__moto-7646",
+    "getmoto__moto-7446",
+    "getmoto__moto-7607",
+    "getmoto__moto-7385",
+    "getmoto__moto-7608"
+  ],
+  "gpu_released": true,
+  "multistep_grpo_started": false
+}

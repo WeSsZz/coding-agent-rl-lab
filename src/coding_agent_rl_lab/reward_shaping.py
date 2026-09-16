@@ -8,6 +8,7 @@ from .contracts import TestResult
 
 _FAILED_NODE_RE = re.compile(r"^FAILED\s+([^\s]+)", re.MULTILINE)
 _FAILED_COUNT_RE = re.compile(r"(\d+)\s+failed\b")
+REWARD_VERSIONS = ("legacy-v1", "conservative-v2")
 
 
 def verifier_failure_ids(result: TestResult | None) -> frozenset[str]:
@@ -42,6 +43,7 @@ class TrainingReward:
     violations: tuple[str, ...]
     strict_reward: float
     training_reward: float
+    reward_version: str = "legacy-v1"
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -55,7 +57,10 @@ def build_training_reward(
     patch_valid: bool,
     verifier_run_after_patch: bool,
     violations: tuple[str, ...],
+    reward_version: str = "legacy-v1",
 ) -> TrainingReward:
+    if reward_version not in REWARD_VERSIONS:
+        raise ValueError("unknown training reward version")
     strict_success = bool(
         final
         and final.passed
@@ -83,6 +88,22 @@ def build_training_reward(
         training_reward = 1.0
     elif final is None or final.timed_out or not patch_created:
         training_reward = 0.0
+    elif reward_version == "conservative-v2":
+        # Only complete, comparable verifier failures can earn partial credit.
+        # Unknown status, invalid patches and newly failing tests earn nothing.
+        comparable = bool(
+            baseline is not None and not baseline.timed_out
+            and baseline.exit_code == 1 and final.exit_code == 1
+            and baseline_count and final_count is not None
+            and baseline_ids and final_ids
+            and new_failure_count == 0
+            and patch_valid and verifier_run_after_patch
+            and not re.search(r"\b[1-9]\d* errors?\b|ERROR collecting", final.stdout + "\n" + final.stderr)
+        )
+        training_reward = (
+            round(0.03 + (0.25 * resolved_count / baseline_count + 0.10 if resolved_count else 0.0), 4)
+            if comparable else 0.0
+        )
     else:
         reward = 0.0
         if baseline_count and final_count is not None and final_count < baseline_count:
@@ -106,4 +127,5 @@ def build_training_reward(
         violations=violations,
         strict_reward=float(strict_success),
         training_reward=training_reward,
+        reward_version=reward_version,
     )

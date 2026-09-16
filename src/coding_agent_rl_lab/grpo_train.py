@@ -33,15 +33,29 @@ object and no prose or tags. Use this exact shape:
 Replace the example name and arguments with the selected provided tool. Never use Markdown fences,
 <tool_call> tags, a "kind" field, or natural-language explanation."""
 
+NAVIGATION_FIRST_POLICY = "failure-object-parent-path-v4"
 
-def bare_json_system_prompt(system_prompt: str) -> str:
+_NAVIGATION_FIRST_INSTRUCTION = """The first response must call a tool. If the observation includes
+OBJECT_UNDER_FAILURE, search that exact symbol first; use EXCEPTION_CLASS only when no failure object
+is provided. Otherwise search an exact failing method, field, or literal. Do not start from logger
+messages, generic runtime errors, or framework methods. When search_text returns multiple plausible
+implementation files, read up to three before editing and prefer behavior or call sites over
+constant-only definitions. If a read result includes PARENT_IMPLEMENTATION_PATH, read that parent
+implementation before starting an unrelated search. Never edit tests. After changing source, run
+the verifier before finish."""
+
+
+def bare_json_system_prompt(system_prompt: str, *, navigation_first: bool = False) -> str:
     """Return the exact system prompt used by bare-JSON GRPO rollouts."""
 
     marker = "\nEvery assistant turn"
     prefix, separator, _ = system_prompt.partition(marker)
     if not separator:
         prefix = system_prompt.rstrip()
-    return prefix.rstrip() + "\n\n" + _BARE_JSON_TOOL_CALL_INSTRUCTION
+    result = prefix.rstrip() + "\n\n" + _BARE_JSON_TOOL_CALL_INSTRUCTION
+    if navigation_first:
+        result += "\n\n" + _NAVIGATION_FIRST_INSTRUCTION
+    return result
 
 
 def load_prompt_rows(path: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
@@ -117,6 +131,11 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--navigation-first",
+        action="store_true",
+        help="Require tool-first, multi-candidate source inspection before editing.",
+    )
+    parser.add_argument(
         "--log-completions",
         action="store_true",
         help="Print sampled completions for an audited smoke diagnosis.",
@@ -141,6 +160,7 @@ def main() -> None:
     rows = configure_prompt_rows_tool_format(
         load_prompt_rows(Path(args.prompt_rows), limit=args.task_count),
         bare_json_tool_calls=args.bare_json_tool_calls,
+        navigation_first=args.navigation_first,
     )
     token = read_worker_token(Path(args.worker_token_file))
 
@@ -195,6 +215,7 @@ def main() -> None:
             args.worker_base_url,
             token,
             reward_audit_path=reward_audit_path,
+            navigation_first=args.navigation_first,
         )
 
     worker_probe = environment_factory()
@@ -218,6 +239,8 @@ def main() -> None:
             "bare_json" if args.bare_json_tool_calls else "model_default"
         ),
         "bare_json_tool_call_parsing_supported": bare_json_parsing_supported,
+        "navigation_first": args.navigation_first,
+        "navigation_policy": NAVIGATION_FIRST_POLICY if args.navigation_first else None,
         "worker_baseline_received": "Baseline verifier result:" in initial_observation,
         "worker_baseline_failed": "Tests failed" in initial_observation,
         "worker_file_listing_received": bool(file_listing.strip()),
@@ -359,6 +382,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise SystemExit("--max-completion-length must be positive")
     if args.max_tool_calling_iterations <= 0:
         raise SystemExit("--max-tool-calling-iterations must be positive")
+    if args.navigation_first and not args.bare_json_tool_calls:
+        raise SystemExit("--navigation-first requires --bare-json-tool-calls")
 
 
 def _metric_number(value: Any) -> float | None:
@@ -397,6 +422,7 @@ def configure_prompt_rows_tool_format(
     rows: list[dict[str, Any]],
     *,
     bare_json_tool_calls: bool,
+    navigation_first: bool = False,
 ) -> list[dict[str, Any]]:
     configured = copy.deepcopy(rows)
     if not bare_json_tool_calls:
@@ -405,7 +431,9 @@ def configure_prompt_rows_tool_format(
         for message in row["prompt"]:
             if message["role"] != "system":
                 continue
-            message["content"] = bare_json_system_prompt(message["content"])
+            message["content"] = bare_json_system_prompt(
+                message["content"], navigation_first=navigation_first,
+            )
     return configured
 
 

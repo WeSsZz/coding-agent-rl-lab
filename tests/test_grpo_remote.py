@@ -7,9 +7,12 @@ import unittest
 from pathlib import Path
 
 from coding_agent_rl_lab.evaluation import load_builtin_tasks
+from coding_agent_rl_lab.contracts import ActionKind, AgentAction
 from coding_agent_rl_lab.grpo_remote import (
     GRPOWorker,
     RemoteGRPOCodingEnvironment,
+    add_navigation_evidence,
+    add_parent_path_evidence,
     build_parser,
     build_worker_server,
 )
@@ -17,6 +20,64 @@ from coding_agent_rl_lab.providers import LocalFixtureEnvironmentProvider
 
 
 class GRPORemoteTests(unittest.TestCase):
+    def test_navigation_evidence_extracts_failure_object_before_exception(self):
+        observation = (
+            "Exception=FailureEventException at '(StateTaskServiceAwsSdk| {'details': {}}'"
+        )
+
+        annotated = add_navigation_evidence(observation)
+
+        self.assertIn("OBJECT_UNDER_FAILURE:StateTaskServiceAwsSdk", annotated)
+        self.assertIn("EXCEPTION_CLASS:FailureEventException", annotated)
+        self.assertLess(annotated.index("OBJECT_UNDER_FAILURE"), annotated.index("EXCEPTION_CLASS"))
+
+    def test_parent_path_evidence_resolves_local_imported_base(self):
+        observation = """from external.base import ExternalBase
+from moto.pkg.callback import (
+    CallbackBase,
+)
+
+class Service(CallbackBase):
+    pass
+"""
+
+        annotated = add_parent_path_evidence(observation, "moto/pkg/service.py")
+
+        self.assertIn("PARENT_IMPLEMENTATION_PATH:moto/pkg/callback.py", annotated)
+        self.assertNotIn("external/base.py", annotated)
+
+    def test_navigation_only_disables_post_reset_verifier(self):
+        root = Path(__file__).resolve().parents[1]
+        tasks = load_builtin_tasks(root)
+        worker = GRPOWorker(
+            {task.task_id: task for task in tasks}, LocalFixtureEnvironmentProvider(root),
+            navigation_only=True,
+        )
+        try:
+            session = worker.create("clamp-negative-values")["session_id"]
+            run = worker.action(session, AgentAction(ActionKind.RUN_TESTS))
+            self.assertFalse(run["terminated"])
+            self.assertIn("disabled", run["observation"])
+            finish = worker.action(session, AgentAction(ActionKind.FINISH))
+            self.assertTrue(finish["terminated"])
+            self.assertEqual(finish["reward"], 0.0)
+        finally:
+            worker.close()
+
+    def test_worker_records_explicit_conservative_reward_version(self):
+        args = build_parser().parse_args(["--reward-version", "conservative-v2"])
+        root = Path(__file__).resolve().parents[1]
+        tasks = load_builtin_tasks(root)
+        worker = GRPOWorker({task.task_id: task for task in tasks},
+                            LocalFixtureEnvironmentProvider(root), reward_version=args.reward_version)
+        try:
+            session = worker.create("clamp-negative-values")
+            payload = worker.finalize(session["session_id"])
+            self.assertEqual(payload["reward_components"]["reward_version"], "conservative-v2")
+            self.assertEqual(payload["reward"], 0.0)
+        finally:
+            worker.close()
+
     def setUp(self) -> None:
         root = Path(__file__).resolve().parents[1]
         tasks = load_builtin_tasks(root)

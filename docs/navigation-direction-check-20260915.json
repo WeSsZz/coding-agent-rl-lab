@@ -1,0 +1,183 @@
+{
+  "schema_version": 1,
+  "metric": "read-official-gold-source-within-first-eight-tool-calls",
+  "baseline": {
+    "adapter": "sft-grpo-dynamic-v2-60step-seed73001/final-adapter",
+    "seed": 110100,
+    "trial_count": 16,
+    "target_file_hits": 8,
+    "task_hits": {
+      "getmoto__moto-7365": 2,
+      "getmoto__moto-7514": 4,
+      "getmoto__moto-7607": 0,
+      "getmoto__moto-7646": 2
+    }
+  },
+  "navigation_v1": {
+    "example_count": 40,
+    "optimizer_steps": 10,
+    "train_loss": 0.2725650832,
+    "final_grad_norm": 0.8881985545,
+    "seed": 110100,
+    "trial_count": 16,
+    "target_file_hits": 7,
+    "task_hits": {
+      "getmoto__moto-7365": 1,
+      "getmoto__moto-7514": 4,
+      "getmoto__moto-7607": 0,
+      "getmoto__moto-7646": 2
+    }
+  },
+  "navigation_v2": {
+    "example_count": 41,
+    "source_counts": {
+      "gold-navigation": 18,
+      "trace-bridge": 2,
+      "trace-navigation": 21
+    },
+    "optimizer_steps": 10,
+    "train_loss": 0.1947614893,
+    "final_grad_norm": 0.6448639035,
+    "task_id": "getmoto__moto-7607",
+    "seed": 110400,
+    "trial_count": 4,
+    "target_file_hits": 0
+  },
+  "capacity_control": {
+    "task_id": "getmoto__moto-7607",
+    "seed": 110400,
+    "max_tool_calls": 8,
+    "bare_7b": {
+      "model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+      "trial_count": 4,
+      "trials_with_tool_actions": 2,
+      "target_file_hits": 0,
+      "violations": 1,
+      "valid_patches": 0
+    },
+    "bare_14b": {
+      "model": "Qwen/Qwen2.5-Coder-14B-Instruct",
+      "trial_count": 4,
+      "trials_with_tool_actions": 2,
+      "target_file_hits": 0,
+      "violations": 0,
+      "valid_patches": 1,
+      "closest_read_path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/resource.py"
+    }
+  },
+  "protocol_v3_14b_followup": {
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "gpu_memory_mib": 97887,
+    "task_id": "getmoto__moto-7607",
+    "seed": 110400,
+    "planned_trial_count": 4,
+    "trials_with_tool_actions": 3,
+    "target_file_hits": 0,
+    "closest_read_path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+    "navigation_policy": "failure-object-first-v3"
+  },
+  "navigation_v2_fresh_14b": {
+    "base_model": "Qwen/Qwen2.5-Coder-14B-Instruct",
+    "adapter_path": "/root/autodl-tmp/sft-navigation-v2-14b-10step-seed113001/final-adapter",
+    "adapter_sha256": "ecc2000b1298ca456ef1795fb4f567d831797950cca9092f0cea0af409a3c800",
+    "example_count": 41,
+    "optimizer_steps": 10,
+    "lora_rank": 16,
+    "learning_rate": 0.0001,
+    "seed": 113001,
+    "train_loss": 0.4668746963,
+    "final_loss": 0.3245732784,
+    "final_grad_norm": 0.3337891102,
+    "effective_update": true,
+    "evaluations": [
+      {
+        "seed": 110400,
+        "planned_trial_count": 4,
+        "trials_with_tool_actions": 3,
+        "target_file_hits": 1
+      },
+      {
+        "seed": 114400,
+        "planned_trial_count": 4,
+        "trials_with_tool_actions": 3,
+        "target_file_hits": 0
+      }
+    ],
+    "combined_planned_trial_count": 8,
+    "combined_trials_with_tool_actions": 6,
+    "combined_target_file_hits": 1,
+    "gate": {
+      "required_each_seed_hits": 1,
+      "required_combined_hits": 3,
+      "passed": false
+    }
+  },
+  "navigation_report_schema": 2,
+  "parent_path_v4_followup": {
+    "navigation_policy": "failure-object-parent-path-v4",
+    "dataset_example_count": 6,
+    "dataset_sha256": "dcdc9b43ecdcab04ab0fbf448a6121bbe27d73b9fff68063fb17de2c082e7e2c",
+    "optimizer_steps": 2,
+    "learning_rate": 0.00005,
+    "train_loss": 0.04364161752164364,
+    "final_loss": 0.029064271599054337,
+    "final_grad_norm": 0.07533025741577148,
+    "adapter_sha256": "e3301338886598a9d5e6c9c683502c49204b7692ece77ae30916950da380d5d2",
+    "navigation_evaluations": [
+      {"seed": 110400, "planned_trial_count": 4, "target_file_hits": 3},
+      {"seed": 114400, "planned_trial_count": 4, "target_file_hits": 1}
+    ],
+    "navigation_gate_passed": true,
+    "full_verifier": {
+      "getmoto__moto-7607": {
+        "seed": 116400,
+        "trial_count": 4,
+        "verified_patches": 2,
+        "trials_resolving_failures": 0,
+        "trials_with_new_failures": 2,
+        "mean_shaped_reward": 0.0
+      },
+      "getmoto__moto-7514": {
+        "seed": 117400,
+        "trial_count": 4,
+        "trials_resolving_failures": 0,
+        "mean_shaped_reward": 0.0
+      },
+      "train_scout_two_rollouts_each": {
+        "getmoto__moto-7365": 0.0,
+        "getmoto__moto-7446": 0.0,
+        "getmoto__moto-7509": 0.0,
+        "getmoto__moto-7646": 0.015
+      },
+      "getmoto__moto-7646_independent": {
+        "seed": 119200,
+        "trial_count": 4,
+        "trials_resolving_failures": 0,
+        "mean_shaped_reward": 0.0
+      },
+      "regression_scout_two_rollouts_each": {
+        "getmoto__moto-7385": 0.0,
+        "getmoto__moto-7608": 0.0
+      }
+    }
+  },
+  "full_verifier_started": true,
+  "grpo_started": false,
+  "decision": "build-semantic-edit-supervision-before-another-reward-scout-or-grpo",
+  "remote_evidence_archive": {
+    "path": "/root/autodl-tmp/navigation-evidence-20260915.tar.gz",
+    "sha256": "652e4324db1a94cddda1abe148f089d242e34815064fbc3264ce48a06f8ec5f7"
+  },
+  "remote_capacity_evidence_archive": {
+    "path": "/root/autodl-tmp/navigation-capacity-evidence-20260915.tar.gz",
+    "sha256": "2c67f2eb1a2a413b6b87c307f66f16d05e85c6e6856a844beaacddf40ca8dc36"
+  },
+  "remote_14b_followup_archive": {
+    "path": "/root/autodl-tmp/navigation-14b-protocol-sft-evidence-20260916.tar.gz",
+    "sha256": "13a3ad5646c8b288b25dc4348568e1c07ccc4905534386997cd4c1051bad85a7"
+  },
+  "remote_parent_path_archive": {
+    "path": "/root/autodl-tmp/navigation-parent-path-evidence-20260916.tar.gz",
+    "sha256": "5d65bdcce1ad82d1efd417bd07f49ac477c15b37585a76f18cf88419afb0b17c"
+  }
+}

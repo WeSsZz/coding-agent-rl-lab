@@ -11,9 +11,14 @@ from coding_agent_rl_lab.sft_train import (
     SFTTrainingError,
     _metric_number,
     _validate_args,
+    build_parser,
     build_token_length_report,
     load_sft_examples,
     prepare_prompt_completion_rows,
+)
+from coding_agent_rl_lab.sft_semantic_recovery import (
+    MIXED_AUDITED_ANSWER_SOURCE,
+    SEMANTIC_RECOVERY_ANSWER_SOURCE,
 )
 from coding_agent_rl_lab.swe_gym_smoke import pinned_rows_for_task_set
 
@@ -57,6 +62,21 @@ def _report() -> dict[str, object]:
 
 
 class SFTTrainTests(unittest.TestCase):
+    def test_parser_accepts_existing_adapter(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--model-path",
+                "/models/base",
+                "--adapter-path",
+                "/models/adapter",
+                "--dataset",
+                "data.jsonl",
+                "--dataset-report",
+                "report.json",
+            ]
+        )
+        self.assertEqual(args.adapter_path, "/models/adapter")
+
     def test_load_and_prepare_prompt_completion_rows(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory, "dataset.jsonl")
@@ -97,10 +117,43 @@ class SFTTrainTests(unittest.TestCase):
             with self.assertRaisesRegex(SFTTrainingError, "disagrees"):
                 load_sft_examples(dataset, report)
 
+    def test_mixed_audited_answer_sources_preserve_row_provenance(self) -> None:
+        first = _example()
+        second = _example()
+        second["example_id"] = "semantic-example-2"
+        second["answer_source"] = SEMANTIC_RECOVERY_ANSWER_SOURCE
+        report_payload = _report()
+        report_payload.update(
+            {
+                "example_count": 2,
+                "answer_source": MIXED_AUDITED_ANSWER_SOURCE,
+                "answer_sources": [
+                    "official_swe_gym_gold_patch",
+                    SEMANTIC_RECOVERY_ANSWER_SOURCE,
+                ],
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory, "dataset.jsonl")
+            report = Path(directory, "report.json")
+            dataset.write_text(
+                json.dumps(first) + "\n" + json.dumps(second) + "\n", encoding="utf-8"
+            )
+            report.write_text(json.dumps(report_payload), encoding="utf-8")
+
+            examples, _ = load_sft_examples(dataset, report)
+
+        self.assertEqual(
+            {example["answer_source"] for example in examples},
+            {"official_swe_gym_gold_patch", SEMANTIC_RECOVERY_ANSWER_SOURCE},
+        )
+
     def test_token_length_report_refuses_to_hide_overflow(self) -> None:
         class Tokenizer:
             def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
-                self.assertions = (tokenize, add_generation_prompt)
+                self.assertions = getattr(self, "assertions", []) + [
+                    (tokenize, add_generation_prompt)
+                ]
                 return "".join(message["content"] for message in messages)
 
             def encode(self, text, *, add_special_tokens):
@@ -114,7 +167,8 @@ class SFTTrainTests(unittest.TestCase):
         self.assertEqual(report["example_count"], 1)
         self.assertEqual(report["over_max_length_count"], 1)
         self.assertGreater(report["max_full_tokens"], 10)
-        self.assertEqual(tokenizer.assertions, (False, False))
+        self.assertEqual(tokenizer.assertions, [(False, False), (False, True)])
+        self.assertGreater(report["total_supervised_tokens"], 0)
         self.assertFalse(tokenizer.add_special_tokens)
 
     def test_training_arguments_must_be_positive(self) -> None:

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "experiment": "moto-7607-sft60-recovery-followup-20260916",
+  "task_id": "getmoto__moto-7607",
+  "task_set": "train",
+  "dataset": {
+    "derived_from_saved_real_rollouts": true,
+    "train_only": true,
+    "example_count": 2,
+    "sha256": "c3c6ed0a68223eef3b314e79117289dd51b2c037edcc3f97c4d6005e7930dfdb"
+  },
+  "training": {
+    "initial_adapter_sha256": "55c947e02b404c3d150e3a2eabd4f55dd50c34641d8d68495f7fbb00c573081c",
+    "seed": 121001,
+    "optimizer_steps": 1,
+    "learning_rate": 0.00005,
+    "train_loss": 0.2579658031463623,
+    "final_grad_norm": 2.6751327514648438,
+    "effective_update": true,
+    "adapter_sha256": "bbda71e6d0549435375f837fa7d363c8472834b2cc4bd11cc494274272f980e0"
+  },
+  "evaluation": {
+    "scope": "complete-official-task",
+    "seed": 121100,
+    "trial_count": 4,
+    "strict_successes": 0,
+    "trials_resolving_failures": 0,
+    "patches_created": 4,
+    "valid_patches": 1,
+    "verified_patches": 4,
+    "trials_with_new_failures": 3,
+    "rewards": [0.03, 0.0, 0.0, 0.0],
+    "mean_shaped_reward": 0.0075,
+    "trl_reported_reward_std": 0.014999999664723873,
+    "adapter_unchanged": true,
+    "optimizer_steps": 0
+  },
+  "grpo_gate": {
+    "reproducible_failure_reduction_observed": false,
+    "within_group_reward_variance_observed": true,
+    "passed": false,
+    "grpo_started": false
+  },
+  "remote_evidence": {
+    "directory": "/root/autodl-tmp/moto-7607-sft60-recovery-followup-20260916",
+    "archive": "/root/autodl-tmp/moto-7607-sft60-recovery-evidence-20260916.tar.gz",
+    "sha256": "95d46453ca623cd84fc5f8e6110e985de7d21b62b20a512b7e8d46a6f9853fd2"
+  }
+}

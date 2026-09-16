@@ -4,12 +4,19 @@ import json
 from pathlib import Path
 
 from coding_agent_rl_lab.grpo_evaluate import summarize
+from coding_agent_rl_lab.swe_gym_smoke import pinned_rows_for_task_set
 
 
 def read_run(directory):
     report = json.loads((directory / "report.json").read_text(encoding="utf-8"))
     if not report["run_complete"] or not report["adapter_unchanged"] or report["optimizer_steps"] != 0:
         raise ValueError("comparison requires complete frozen-adapter evaluations")
+    expected = [(item.instance_id, split) for split in ("train", "regression")
+                for item in pinned_rows_for_task_set(split)]
+    if [(t["task_id"], t["split"]) for t in report["tasks"]] != expected:
+        raise ValueError("comparison requires the complete fixed train/regression task sets")
+    if report["planned_trial_count"] != len(expected) * report["budget"]["num_generations"]:
+        raise ValueError("planned trial count differs from fixed evaluation coverage")
     records = {"train": [], "regression": []}
     for task in report["tasks"]:
         audit = directory / (task["task_id"] + "-reward-audit.jsonl")
@@ -40,7 +47,7 @@ def main():
         paired.append({"task_id": first["task_id"], "split": first["split"], "seed": first["seed"],
                        "before": first["summary"], "after": second["summary"]})
     result = {
-        "schema_version": 1, "training_performed": False,
+        "schema_version": 1, "run_complete": True, "training_performed": False,
         "before_adapter_sha256": before["adapter_sha256"],
         "after_adapter_sha256": after["adapter_sha256"],
         "budget": before["budget"], "versions": before["versions"],

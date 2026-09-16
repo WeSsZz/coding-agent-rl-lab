@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from coding_agent_rl_lab.contracts import TestResult
 from coding_agent_rl_lab.reward_shaping import build_training_reward
@@ -22,6 +23,46 @@ def _result(*failed: str, passed: bool = False, timed_out: bool = False) -> Test
 
 
 class TrainingRewardTests(unittest.TestCase):
+    def test_conservative_reward_distinguishes_progress_from_safe_editing(self):
+        baseline = _result("a", "b")
+        for final, expected in ((baseline, 0.03), (_result("b"), 0.255), (_result(passed=True), 1.0)):
+            with self.subTest(expected=expected):
+                reward = build_training_reward(
+                    baseline=baseline, final=final, patch_created=True, patch_valid=True,
+                    verifier_run_after_patch=True, violations=(), reward_version="conservative-v2",
+                )
+                self.assertEqual(reward.training_reward, expected)
+                self.assertEqual(reward.to_dict()["reward_version"], "conservative-v2")
+
+    def test_conservative_reward_rejects_new_failures_and_unknown_verifier_status(self):
+        baseline = _result("a", "b", "c")
+        finals = [None, _result(), _result("b", "new"),
+                  _result("b", timed_out=True), replace(_result("b"), exit_code=2),
+                  replace(_result("b"), stderr="ERROR collecting tests/test_other.py"),
+                  replace(_result("b"), stderr="1 error")]
+        for final in finals:
+            with self.subTest(final=final):
+                reward = build_training_reward(
+                    baseline=baseline, final=final, patch_created=True, patch_valid=True,
+                    verifier_run_after_patch=True, violations=(), reward_version="conservative-v2",
+                )
+                self.assertEqual(reward.training_reward, 0.0)
+
+    def test_conservative_progress_requires_valid_verified_patch(self):
+        for changes in ({"patch_valid": False}, {"verifier_run_after_patch": False}, {"patch_created": False}):
+            args = dict(baseline=_result("a", "b"), final=_result("b"), patch_created=True,
+                        patch_valid=True, verifier_run_after_patch=True, violations=(), reward_version="conservative-v2")
+            reward = build_training_reward(**{**args, **changes})
+            self.assertEqual(reward.training_reward, 0.0)
+
+    def test_conservative_violation_overrides_success(self):
+        reward = build_training_reward(
+            baseline=_result("a"), final=_result(passed=True), patch_created=True, patch_valid=True,
+            verifier_run_after_patch=True, violations=("test_tampering",), reward_version="conservative-v2",
+        )
+        self.assertEqual(reward.training_reward, -1.0)
+        self.assertEqual(reward.strict_reward, 0.0)
+
     def test_unknown_final_count_does_not_claim_resolved_or_no_new_failures(self) -> None:
         for final in (None, _result()):
             with self.subTest(final=final):

@@ -128,6 +128,27 @@ class GRPOTrainTests(unittest.TestCase):
         self.assertNotIn("Never answer with a plain JSON", system_prompt)
         self.assertNotEqual(configured, rows)
 
+    def test_navigation_first_adds_source_inspection_policy(self) -> None:
+        rows = [{
+            "task_id": "task",
+            "prompt": [
+                {"role": "system", "content": "Use tools."},
+                {"role": "user", "content": "fix it"},
+            ],
+        }]
+
+        configured = configure_prompt_rows_tool_format(
+            rows, bare_json_tool_calls=True, navigation_first=True,
+        )
+
+        system_prompt = configured[0]["prompt"][0]["content"]
+        self.assertIn("first response must call a tool", system_prompt)
+        self.assertIn("OBJECT_UNDER_FAILURE", system_prompt)
+        self.assertIn("EXCEPTION_CLASS", system_prompt)
+        self.assertIn("read up to three", system_prompt)
+        self.assertIn("PARENT_IMPLEMENTATION_PATH", system_prompt)
+        self.assertIn("Never edit tests", system_prompt)
+
     def test_bare_json_parser_probe_requires_exact_tool_shape(self) -> None:
         class Tokenizer:
             def encode(self, text, *, add_special_tokens):

@@ -10,7 +10,7 @@ from typing import Any
 
 from .grpo_remote import RemoteGRPOCodingEnvironment
 from .grpo_train import (
-    configure_prompt_rows_tool_format, configure_tool_response_parsing,
+    NAVIGATION_FIRST_POLICY, configure_prompt_rows_tool_format, configure_tool_response_parsing,
     load_prompt_rows, read_worker_token, probe_bare_json_tool_parsing,
 )
 from .swe_gym_smoke import pinned_rows_for_task_set
@@ -55,7 +55,7 @@ def file_hash(path: Path) -> str:
 
 
 def validate_resume(previous: dict[str, Any], expected: dict[str, Any], task_ids: set[str]) -> None:
-    for key in ("adapter_path", "adapter_sha256", "model_path", "prompt_rows_sha256", "seed", "budget", "planned_trial_count"):
+    for key in ("adapter_path", "adapter_sha256", "model_path", "prompt_rows_sha256", "seed", "budget", "planned_trial_count", "navigation_first", "navigation_policy"):
         if previous.get(key) != expected[key]:
             raise ValueError(f"incompatible resume field: {key}")
     saved_ids = [entry["task_id"] for entry in previous["tasks"]]
@@ -66,7 +66,7 @@ def validate_resume(previous: dict[str, Any], expected: dict[str, Any], task_ids
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-path", required=True)
-    parser.add_argument("--adapter-path", required=True)
+    parser.add_argument("--adapter-path", help="Omit to evaluate the frozen base model")
     parser.add_argument("--prompt-rows", required=True)
     parser.add_argument("--worker-token-file", required=True)
     parser.add_argument("--worker-base-url", default="http://127.0.0.1:9011")
@@ -74,23 +74,36 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=81000)
     parser.add_argument("--num-generations", type=int, default=2)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--task-set", choices=("train", "regression", "both"), default="both")
+    parser.add_argument("--task-id", action="append", default=[])
+    parser.add_argument("--max-tool-calling-iterations", type=int, default=8)
+    parser.add_argument("--trace-tools", action="store_true")
+    parser.add_argument("--navigation-first", action="store_true")
     args = parser.parse_args()
     if args.num_generations < 2:
         parser.error("--num-generations must be at least two")
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=args.resume)
     rows = load_prompt_rows(Path(args.prompt_rows))
-    selected = [(split, row) for split in ("train", "regression") for row in select_rows(rows, split)]
+    splits = ("train", "regression") if args.task_set == "both" else (args.task_set,)
+    selected = [(split, row) for split in splits for row in select_rows(rows, split)]
+    if args.task_id:
+        allowed = {row["task_id"] for _, row in selected}
+        if not set(args.task_id) <= allowed:
+            parser.error("task IDs must belong to the selected split")
+        selected = [(split, row) for split, row in selected if row["task_id"] in args.task_id]
     token = read_worker_token(Path(args.worker_token_file))
-    adapter = Path(args.adapter_path).resolve()
-    before = file_hash(adapter / "adapter_model.safetensors")
+    adapter = Path(args.adapter_path).resolve() if args.adapter_path else None
+    before = file_hash(adapter / "adapter_model.safetensors") if adapter else None
     report: dict[str, Any] = {
         "schema_version": 1, "training_performed": False, "run_complete": False,
-        "adapter_path": str(adapter), "adapter_sha256": before,
+        "adapter_path": str(adapter) if adapter else None, "adapter_sha256": before,
         "model_path": args.model_path, "prompt_rows_sha256": file_hash(Path(args.prompt_rows)),
         "seed": args.seed, "planned_trial_count": len(selected) * args.num_generations,
         "protocol": "TRL GRPO evaluate, bare JSON, dynamic tools including replace_lines",
-        "budget": {"max_completion_length": 4096, "max_tool_calling_iterations": 8,
+        "navigation_first": args.navigation_first,
+        "navigation_policy": NAVIGATION_FIRST_POLICY if args.navigation_first else None,
+        "budget": {"max_completion_length": 4096, "max_tool_calling_iterations": args.max_tool_calling_iterations,
                    "temperature": 1.0, "top_p": 0.95, "num_generations": args.num_generations},
         "tasks": [],
     }
@@ -119,14 +132,28 @@ def main() -> None:
     if not probe_bare_json_tool_parsing(tokenizer, lambda t, ids, *, prefix: t.parse_response(ids, prefix=prefix)):
         raise RuntimeError("bare JSON parser probe failed")
     model = AutoModelForCausalLM.from_pretrained(args.model_path, dtype=torch.bfloat16, local_files_only=True)
-    model = PeftModel.from_pretrained(model, adapter, is_trainable=False)
+    if adapter:
+        model = PeftModel.from_pretrained(model, adapter, is_trainable=False)
     model.requires_grad_(False)
     model.eval()
     environments: list[RemoteGRPOCodingEnvironment] = []
     audit_path = output / "unused.jsonl"
 
+    class TracedEnvironment(RemoteGRPOCodingEnvironment):
+        def _request(self, method, path, payload):
+            result = super()._request(method, path, payload)
+            if args.trace_tools:
+                record = {"task_id": payload.get("task_id", self._task_id), "method": method,
+                          "path": path, "request": payload, "response": result}
+                with (output / "tool-traces.jsonl").open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+            return result
+
     def factory() -> RemoteGRPOCodingEnvironment:
-        environment = RemoteGRPOCodingEnvironment(args.worker_base_url, token, reward_audit_path=audit_path)
+        environment = TracedEnvironment(
+            args.worker_base_url, token, reward_audit_path=audit_path,
+            navigation_first=args.navigation_first,
+        )
         environments.append(environment)
         return environment
 
@@ -135,15 +162,17 @@ def main() -> None:
         per_device_train_batch_size=1, per_device_eval_batch_size=args.num_generations,
         generation_batch_size=args.num_generations, num_generations=args.num_generations,
         num_generations_eval=args.num_generations, max_completion_length=4096,
-        max_tool_calling_iterations=8, temperature=1.0, top_p=0.95,
+        max_tool_calling_iterations=args.max_tool_calling_iterations, temperature=1.0, top_p=0.95,
         bf16=True, use_vllm=False, report_to="none", save_strategy="no", seed=args.seed,
     )
     trainer = GRPOTrainer(
         model=model, reward_funcs=None, args=config, processing_class=tokenizer,
-        train_dataset=Dataset.from_list(configure_prompt_rows_tool_format([selected[0][1]], bare_json_tool_calls=True)),
+        train_dataset=Dataset.from_list(configure_prompt_rows_tool_format(
+            [selected[0][1]], bare_json_tool_calls=True, navigation_first=args.navigation_first,
+        )),
         environment_factory=factory,
     )
-    all_records: dict[str, list[dict[str, Any]]] = {"train": [], "regression": []}
+    all_records: dict[str, list[dict[str, Any]]] = {split: [] for split in splits}
     completed = {entry["task_id"]: entry for entry in report["tasks"]}
     try:
         for index, (split, row) in enumerate(selected):
@@ -158,6 +187,7 @@ def main() -> None:
                     raise ValueError("completed task split or seed mismatch")
                 entry["summary"] = summarize(records)
                 all_records[split].extend(records)
+                report["completed_trial_count"] = sum(len(v) for v in all_records.values())
                 continue
             if audit_path.exists():
                 audit_path.rename(audit_path.with_suffix(f".interrupted-{time.time_ns()}.jsonl"))
@@ -166,7 +196,9 @@ def main() -> None:
             seed = args.seed + index * 100
             set_seed(seed)
             started = time.monotonic()
-            dataset = Dataset.from_list(configure_prompt_rows_tool_format([row], bare_json_tool_calls=True))
+            dataset = Dataset.from_list(configure_prompt_rows_tool_format(
+                [row], bare_json_tool_calls=True, navigation_first=args.navigation_first,
+            ))
             metrics = trainer.evaluate(eval_dataset=dataset)
             records = [json.loads(line) for line in audit_path.read_text().splitlines() if line.strip()]
             if len(records) != args.num_generations or any(r["task_id"] != task_id for r in records):
@@ -180,7 +212,7 @@ def main() -> None:
             checkpoint()
             print(json.dumps(entry), flush=True)
         report["summary"] = {split: summarize(records) for split, records in all_records.items()}
-        report["adapter_unchanged"] = before == file_hash(adapter / "adapter_model.safetensors")
+        report["adapter_unchanged"] = adapter is None or before == file_hash(adapter / "adapter_model.safetensors")
         report["optimizer_steps"] = trainer.state.global_step
         if not report["adapter_unchanged"] or report["optimizer_steps"] != 0:
             raise RuntimeError("evaluation mutated the adapter or performed optimizer steps")

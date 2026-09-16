@@ -1,0 +1,317 @@
+{
+  "schema_version": 1,
+  "run_complete": true,
+  "training_performed": false,
+  "before_adapter_sha256": "55c947e02b404c3d150e3a2eabd4f55dd50c34641d8d68495f7fbb00c573081c",
+  "after_adapter_sha256": "1ebf72abd5f5e960c676abafe82de6cb623660307554310cb2b31db00e397a5a",
+  "budget": {
+    "max_completion_length": 4096,
+    "max_tool_calling_iterations": 8,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "num_generations": 2
+  },
+  "versions": {
+    "torch": "2.8.0+cu128",
+    "transformers": "5.16.1",
+    "trl": "1.12.0"
+  },
+  "summary": {
+    "train": {
+      "before": {
+        "trial_count": 12,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.0375,
+        "patches_created": 5,
+        "valid_patches": 3,
+        "verified_patches": 5,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 2,
+        "trials_with_new_failures": 1,
+        "trials_with_violations": 0
+      },
+      "after": {
+        "trial_count": 12,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.0625,
+        "patches_created": 6,
+        "valid_patches": 5,
+        "verified_patches": 6,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 1,
+        "trials_with_new_failures": 2,
+        "trials_with_violations": 0
+      }
+    },
+    "regression": {
+      "before": {
+        "trial_count": 4,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.0375,
+        "patches_created": 1,
+        "valid_patches": 1,
+        "verified_patches": 1,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      },
+      "after": {
+        "trial_count": 4,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.0,
+        "patches_created": 0,
+        "valid_patches": 0,
+        "verified_patches": 0,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      }
+    }
+  },
+  "tasks": [
+    {
+      "task_id": "getmoto__moto-7509",
+      "split": "train",
+      "seed": 81000,
+      "before": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.075,
+        "patches_created": 1,
+        "valid_patches": 1,
+        "verified_patches": 1,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      },
+      "after": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.075,
+        "patches_created": 1,
+        "valid_patches": 1,
+        "verified_patches": 1,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      }
+    },
+    {
+      "task_id": "getmoto__moto-7365",
+      "split": "train",
+      "seed": 81100,
+      "before": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.0,
+        "patches_created": 1,
+        "valid_patches": 0,
+        "verified_patches": 1,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 1,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      },
+      "after": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.075,
+        "patches_created": 1,
+        "valid_patches": 1,
+        "verified_patches": 1,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      }
+    },
+    {
+      "task_id": "getmoto__moto-7514",
+      "split": "train",
+      "seed": 81200,
+      "before": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.0,
+        "patches_created": 1,
+        "valid_patches": 0,
+        "verified_patches": 1,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 1,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      },
+      "after": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.075,
+        "patches_created": 2,
+        "valid_patches": 1,
+        "verified_patches": 2,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 1,
+        "trials_with_new_failures": 1,
+        "trials_with_violations": 0
+      }
+    },
+    {
+      "task_id": "getmoto__moto-7646",
+      "split": "train",
+      "seed": 81300,
+      "before": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.075,
+        "patches_created": 1,
+        "valid_patches": 1,
+        "verified_patches": 1,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      },
+      "after": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.075,
+        "patches_created": 1,
+        "valid_patches": 1,
+        "verified_patches": 1,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      }
+    },
+    {
+      "task_id": "getmoto__moto-7446",
+      "split": "train",
+      "seed": 81400,
+      "before": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.0,
+        "patches_created": 0,
+        "valid_patches": 0,
+        "verified_patches": 0,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      },
+      "after": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.0,
+        "patches_created": 0,
+        "valid_patches": 0,
+        "verified_patches": 0,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      }
+    },
+    {
+      "task_id": "getmoto__moto-7607",
+      "split": "train",
+      "seed": 81500,
+      "before": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.075,
+        "patches_created": 1,
+        "valid_patches": 1,
+        "verified_patches": 1,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 1,
+        "trials_with_violations": 0
+      },
+      "after": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.075,
+        "patches_created": 1,
+        "valid_patches": 1,
+        "verified_patches": 1,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 1,
+        "trials_with_violations": 0
+      }
+    },
+    {
+      "task_id": "getmoto__moto-7385",
+      "split": "regression",
+      "seed": 81600,
+      "before": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.0,
+        "patches_created": 0,
+        "valid_patches": 0,
+        "verified_patches": 0,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      },
+      "after": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.0,
+        "patches_created": 0,
+        "valid_patches": 0,
+        "verified_patches": 0,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      }
+    },
+    {
+      "task_id": "getmoto__moto-7608",
+      "split": "regression",
+      "seed": 81700,
+      "before": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.075,
+        "patches_created": 1,
+        "valid_patches": 1,
+        "verified_patches": 1,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      },
+      "after": {
+        "trial_count": 2,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.0,
+        "patches_created": 0,
+        "valid_patches": 0,
+        "verified_patches": 0,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 0,
+        "trials_with_violations": 0
+      }
+    }
+  ],
+  "completed_evaluation_seconds": {
+    "before": 770.2765240967274,
+    "after": 837.7765579111874
+  },
+  "limitations": [
+    "Two samples per task: exploratory, not a significance claim.",
+    "Unknown final failure counts are not evidence of resolved tests.",
+    "Interrupted infrastructure attempts are excluded; complete task checkpoints are retained.",
+    "Failure-count improvement requires a valid patch and no violations; audits do not retain full test output."
+  ]
+}

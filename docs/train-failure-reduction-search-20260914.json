@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "task_id": "getmoto__moto-7514",
+  "task_set": "train",
+  "reward_version": "conservative-v2",
+  "cumulative_sft": {
+    "initial_adapter": "sft-grpo-dynamic-v2-60step-seed73001/final-adapter",
+    "optimizer_steps": 12,
+    "example_count": 16,
+    "train_loss": 0.11256991870080431,
+    "final_step_loss": 0.09596098214387894,
+    "final_step_grad_norm": 0.16778814792633057,
+    "effective_update": true
+  },
+  "frozen_evaluations": [
+    {
+      "scope": "train-curriculum-gzip-plus-pass-to-pass",
+      "seed": 104100,
+      "trial_count": 4,
+      "baseline_failure_count": 1,
+      "strict_successes": 1,
+      "trials_resolving_failures": 1,
+      "patches_created": 3,
+      "valid_patches": 1,
+      "verified_patches": 1,
+      "trials_with_new_failures": 0,
+      "mean_shaped_reward": 0.25
+    },
+    {
+      "scope": "complete-official-task",
+      "seed": 105100,
+      "trial_count": 4,
+      "baseline_failure_count": 3,
+      "strict_successes": 0,
+      "trials_resolving_failures": 0,
+      "patches_created": 3,
+      "valid_patches": 3,
+      "verified_patches": 2,
+      "trials_with_new_failures": 3,
+      "mean_shaped_reward": 0.0
+    }
+  ],
+  "grpo_attempts": [
+    {
+      "seed": 104100,
+      "optimizer_steps": 1,
+      "rewards": [0.0, 0.0, 0.0, 0.0],
+      "reward_std": 0.0,
+      "grad_norm": 0.0,
+      "effective_update": false
+    },
+    {
+      "seed": 104101,
+      "optimizer_steps": 1,
+      "rewards": [0.0, 0.0, 0.0, 0.0],
+      "reward_std": 0.0,
+      "grad_norm": 0.0,
+      "effective_update": false
+    }
+  ],
+  "full_task_7607_follow_up": {
+    "baseline_failure_count": 1,
+    "pass_to_pass_count": 2,
+    "cumulative_example_count": 6,
+    "five_step_evaluation": {
+      "seed": 106100,
+      "strict_successes": 0,
+      "trials_resolving_failures": 0,
+      "trials_with_new_failures": 2,
+      "mean_shaped_reward": 0.015
+    },
+    "ten_step_evaluation": {
+      "seed": 107100,
+      "strict_successes": 0,
+      "trials_resolving_failures": 0,
+      "trials_with_new_failures": 3,
+      "mean_shaped_reward": 0.0075
+    },
+    "recovery_training": {
+      "initial_adapter": "sft-grpo-7607-cumulative-from-sft60-10step-seed106002/final-adapter",
+      "example_count": 2,
+      "optimizer_steps": 2,
+      "train_loss": 0.1180600477,
+      "final_step_loss": 0.02234607,
+      "final_step_grad_norm": 0.44709697,
+      "effective_update": true
+    },
+    "recovery_evaluation": {
+      "scope": "complete-official-task",
+      "seed": 108100,
+      "trial_count": 4,
+      "strict_successes": 0,
+      "trials_resolving_failures": 0,
+      "patches_created": 2,
+      "valid_patches": 2,
+      "verified_patches": 2,
+      "trials_with_new_failures": 2,
+      "mean_shaped_reward": 0.0,
+      "reward_std": 0.0,
+      "target_path_tool_calls": 0
+    },
+    "recovery_evidence_archive": {
+      "path": "/root/autodl-tmp/train-7607-recovery-evidence-20260915.tar.gz",
+      "sha256": "0d4d0c4d3b069d66ddff69bc4d4e9d74ad8ae78078e9a8b40d0a1fcb6b38d3dc"
+    },
+    "grpo_started": false
+  },
+  "decision": "do-not-start-multi-step-grpo",
+  "remote_evidence_archive": {
+    "path": "/root/autodl-tmp/train-failure-reduction-evidence-20260914.tar.gz",
+    "sha256": "492a0b8e3eb1f116541fe7b54c7eaf0de5b602a0f77e227a855d6993189d39d6"
+  }
+}

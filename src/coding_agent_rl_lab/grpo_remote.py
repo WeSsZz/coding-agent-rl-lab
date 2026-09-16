@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -18,7 +19,7 @@ from .environment import CodingEnvironment, EnvironmentError
 from .evaluation import load_builtin_tasks
 from .grpo_environment import GRPOEnvironmentError
 from .providers import DockerSandboxProvider, EnvironmentProvider, LocalFixtureEnvironmentProvider
-from .reward_shaping import TrainingReward, build_training_reward
+from .reward_shaping import REWARD_VERSIONS, TrainingReward, build_training_reward
 from .swe_gym import SWEGymTaskAdapter, audited_swe_gym_test_command
 from .swe_gym_smoke import (
     PINNED_INSTANCE_IDS,
@@ -30,6 +31,53 @@ from .swe_gym_smoke import (
 
 
 _REWARD_AUDIT_LOCK = threading.Lock()
+_FAILURE_OBJECT_PATTERN = re.compile(r"\bat\s+['\"]?\(([A-Z][A-Za-z0-9_]+)\|")
+_EXCEPTION_PATTERN = re.compile(r"\bException=([A-Z][A-Za-z0-9_]+)")
+_FROM_IMPORT_PATTERN = re.compile(
+    r"(?m)^from\s+([A-Za-z_][A-Za-z0-9_.]*)\s+import\s+(?:\(\s*)?([A-Za-z_][A-Za-z0-9_]*)"
+)
+_CLASS_BASES_PATTERN = re.compile(
+    r"(?m)^class\s+[A-Za-z_][A-Za-z0-9_]*\(([^)]*)\)\s*:"
+)
+
+
+def add_navigation_evidence(observation: str) -> str:
+    """Append exact failure symbols already present in a verifier observation."""
+
+    failure_object = _FAILURE_OBJECT_PATTERN.search(observation)
+    exception = _EXCEPTION_PATTERN.search(observation)
+    if failure_object is None and exception is None:
+        return observation
+    lines = ["Navigation evidence extracted from the verifier:"]
+    if failure_object is not None:
+        lines.append(f"OBJECT_UNDER_FAILURE:{failure_object.group(1)}")
+    if exception is not None:
+        lines.append(f"EXCEPTION_CLASS:{exception.group(1)}")
+    return observation.rstrip() + "\n\n" + "\n".join(lines) + "\n"
+
+
+def add_parent_path_evidence(observation: str, source_path: str) -> str:
+    """Expose local files that define an imported parent class."""
+
+    parts = source_path.split("/")
+    prefix = parts[0] + "/" if parts[0] in {"src", "lib"} else ""
+    root = parts[1] if prefix and len(parts) > 1 else parts[0]
+    bases = {
+        name
+        for group in _CLASS_BASES_PATTERN.findall(observation)
+        for name in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", group)
+    }
+    paths = []
+    for module, symbol in _FROM_IMPORT_PATTERN.findall(observation):
+        if symbol in bases and module.split(".", 1)[0] == root:
+            path = prefix + module.replace(".", "/") + ".py"
+            if path not in paths:
+                paths.append(path)
+    if not paths:
+        return observation
+    lines = ["Parent implementation paths derived from this file:"]
+    lines.extend(f"PARENT_IMPLEMENTATION_PATH:{path}" for path in paths)
+    return observation.rstrip() + "\n\n" + "\n".join(lines) + "\n"
 
 
 class GRPOWorkerError(RuntimeError):
@@ -49,11 +97,15 @@ class _WorkerSession:
 
 
 class GRPOWorker:
-    def __init__(self, tasks: dict[str, CodingTask], provider: EnvironmentProvider) -> None:
+    def __init__(self, tasks: dict[str, CodingTask], provider: EnvironmentProvider, *, reward_version: str = "legacy-v1", navigation_only: bool = False) -> None:
         if not tasks:
             raise ValueError("worker task set must not be empty")
         self._tasks = dict(tasks)
         self._provider = provider
+        if reward_version not in REWARD_VERSIONS:
+            raise ValueError("unknown training reward version")
+        self._reward_version = reward_version
+        self._navigation_only = navigation_only
         self._sessions: dict[str, _WorkerSession] = {}
         self._lock = threading.Lock()
 
@@ -77,6 +129,13 @@ class GRPOWorker:
         session = self._session(session_id)
         environment = self._active_environment(session)
         session.action_kinds.append(action.kind.value)
+        if self._navigation_only and action.kind == ActionKind.RUN_TESTS:
+            session.action_outcomes.append({"kind": action.kind.value, "outcome": "disabled"})
+            return self._action_response(session, "Verifier disabled during navigation evaluation.")
+        if self._navigation_only and action.kind == ActionKind.FINISH:
+            session.action_outcomes.append({"kind": action.kind.value, "outcome": "terminated"})
+            self._complete(session, None)
+            return self._action_response(session, "Navigation evaluation complete.")
         patch_existed_before_action = bool(environment.changed_files())
         try:
             result = environment.step(action)
@@ -96,8 +155,12 @@ class GRPOWorker:
             session.verifier_run_after_patch = True
         if result.terminated:
             self._complete(session, result.test_result)
+        return self._action_response(session, result.observation)
+
+    @staticmethod
+    def _action_response(session: _WorkerSession, observation: str) -> dict[str, Any]:
         return {
-            "observation": result.observation,
+            "observation": observation,
             "terminated": session.completed,
             "reward": session.reward if session.completed else None,
             "strict_reward": session.strict_reward if session.completed else None,
@@ -114,7 +177,7 @@ class GRPOWorker:
         session = self._session(session_id)
         if not session.completed:
             environment = self._active_environment(session)
-            self._complete(session, environment.finalize())
+            self._complete(session, None if self._navigation_only else environment.finalize())
         return {
             "reward": session.reward,
             "strict_reward": session.strict_reward,
@@ -153,8 +216,7 @@ class GRPOWorker:
             raise GRPOWorkerError("session is already complete")
         return session.environment
 
-    @staticmethod
-    def _complete(session: _WorkerSession, test_result: TestResult | None) -> None:
+    def _complete(self, session: _WorkerSession, test_result: TestResult | None) -> None:
         environment = session.environment
         if environment is None:
             return
@@ -167,6 +229,7 @@ class GRPOWorker:
                 patch_valid=environment.patch_is_valid(),
                 verifier_run_after_patch=session.verifier_run_after_patch,
                 violations=tuple(environment.violations),
+                reward_version=self._reward_version,
             )
             session.reward = reward.training_reward
             session.strict_reward = reward.strict_reward
@@ -267,10 +330,12 @@ class RemoteGRPOCodingEnvironment:
         token: str,
         *,
         reward_audit_path: Path | None = None,
+        navigation_first: bool = False,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._token = token
         self._reward_audit_path = reward_audit_path
+        self._navigation_first = navigation_first
         self._session_id: str | None = None
         self._task_id: str | None = None
         self._reward = 0.0
@@ -286,7 +351,8 @@ class RemoteGRPOCodingEnvironment:
         self._task_id = task_id
         self._reward = 0.0
         self._completed = False
-        return str(payload["observation"])
+        observation = str(payload["observation"])
+        return add_navigation_evidence(observation) if self._navigation_first else observation
 
     def list_files(self) -> str:
         """List repository files.
@@ -423,7 +489,10 @@ class RemoteGRPOCodingEnvironment:
             self._reward = float(payload.get("reward") or 0.0)
             self._audit_reward(payload, completion_source="action")
             self._delete()
-        return str(payload["observation"])
+        observation = str(payload["observation"])
+        if self._navigation_first and action.kind == ActionKind.READ_FILE:
+            observation = add_parent_path_evidence(observation, str(action.arguments["path"]))
+        return observation
 
     def _audit_reward(self, payload: dict[str, Any], *, completion_source: str) -> None:
         if self._reward_audit_path is None:
@@ -564,6 +633,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rows-cache", default="work/swe-gym-development-rows.jsonl")
     parser.add_argument("--test-timeout-seconds", type=float, default=900.0)
     parser.add_argument("--token-file")
+    parser.add_argument("--reward-version", choices=REWARD_VERSIONS, default="legacy-v1")
+    parser.add_argument("--navigation-only", action="store_true", help="Disable verifier actions after the baseline reset")
     return parser
 
 
@@ -626,11 +697,14 @@ def main() -> None:
                 test_timeout_seconds=args.test_timeout_seconds,
             ),
         )
-    worker = GRPOWorker({task.task_id: task for task in tasks}, provider)
+    worker = GRPOWorker(
+        {task.task_id: task for task in tasks}, provider,
+        reward_version=args.reward_version, navigation_only=args.navigation_only,
+    )
     server = build_worker_server(worker, token=token, port=args.port)
     print(
         f"GRPO worker listening on 127.0.0.1:{args.port} "
-        f"source={args.task_source} task_set={args.task_set} tasks={len(tasks)}",
+        f"source={args.task_source} task_set={args.task_set} tasks={len(tasks)} reward_version={args.reward_version}",
         flush=True,
     )
     try:

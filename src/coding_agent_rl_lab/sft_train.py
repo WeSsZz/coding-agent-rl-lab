@@ -3,11 +3,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import time
 from pathlib import Path
 from typing import Any, Iterable
 
 from .model_policy import PROMPT_VERSION, OpenAICompatiblePolicy
 from .sft_grpo import GRPO_ACTION_PROTOCOL, GRPO_SFT_PROMPT_VERSION, GRPO_SFT_SCHEMA
+from .sft_semantic_recovery import (
+    MIXED_AUDITED_ANSWER_SOURCE,
+    SEMANTIC_RECOVERY_ANSWER_SOURCE,
+)
 from .swe_gym_smoke import pinned_rows_for_task_set
 
 
@@ -40,6 +45,7 @@ def load_sft_examples(
                 allowed_task_ids,
                 dataset_schema=report["dataset_schema"],
                 prompt_version=report["prompt_version"],
+                answer_sources=_dataset_answer_sources(report),
             )
             example_id = example["example_id"]
             if example_id in seen:
@@ -80,7 +86,9 @@ def build_token_length_report(
     if max_length <= 0:
         raise SFTTrainingError("max_length must be positive")
     full_lengths: list[int] = []
+    prompt_lengths: list[int] = []
     completion_lengths: list[int] = []
+    supervised_lengths: list[int] = []
     for row in rows:
         prompt = row["prompt"]
         completion = row["completion"]
@@ -92,18 +100,36 @@ def build_token_length_report(
         if not isinstance(rendered, str):
             raise SFTTrainingError("chat template must render text before token length inspection")
         full_ids = tokenizer.encode(rendered, add_special_tokens=False)
+        prompt_rendered = tokenizer.apply_chat_template(
+            prompt,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        if not isinstance(prompt_rendered, str):
+            raise SFTTrainingError("chat template must render the prompt before token inspection")
+        prompt_ids = tokenizer.encode(prompt_rendered, add_special_tokens=False)
         completion_ids = tokenizer.encode(
             completion[0]["content"],
             add_special_tokens=False,
         )
+        supervised_length = len(full_ids) - len(prompt_ids)
+        if supervised_length <= 0:
+            raise SFTTrainingError("rendered completion has no supervised tokens")
         full_lengths.append(len(full_ids))
+        prompt_lengths.append(len(prompt_ids))
         completion_lengths.append(len(completion_ids))
+        supervised_lengths.append(supervised_length)
     over_limit = sum(length > max_length for length in full_lengths)
     return {
         "example_count": len(full_lengths),
         "min_full_tokens": min(full_lengths),
         "max_full_tokens": max(full_lengths),
+        "min_prompt_tokens": min(prompt_lengths),
+        "max_prompt_tokens": max(prompt_lengths),
         "max_completion_tokens": max(completion_lengths),
+        "min_supervised_tokens": min(supervised_lengths),
+        "max_supervised_tokens": max(supervised_lengths),
+        "total_supervised_tokens": sum(supervised_lengths),
         "over_max_length_count": over_limit,
     }
 
@@ -113,6 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Preflight or train a train-only answer-supervised LoRA tool warm-start"
     )
     parser.add_argument("--model-path", required=True)
+    parser.add_argument("--adapter-path", help="Continue training an existing LoRA adapter")
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--dataset-report", required=True)
     parser.add_argument("--output-dir", default="/root/autodl-tmp/sft-warm-start")
@@ -122,6 +149,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=61001)
+    parser.add_argument(
+        "--report-output",
+        help="Optional non-overwriting JSON path for tokenizer preflight evidence",
+    )
     parser.add_argument(
         "--train",
         action="store_true",
@@ -136,6 +167,9 @@ def main() -> None:
     model_path = Path(args.model_path).resolve()
     if not model_path.is_dir():
         raise SystemExit(f"model path is not a directory: {model_path}")
+    initial_adapter = Path(args.adapter_path).resolve() if args.adapter_path else None
+    if initial_adapter is not None and not initial_adapter.is_dir():
+        raise SystemExit(f"adapter path is not a directory: {initial_adapter}")
     dataset_path = Path(args.dataset).resolve()
     report_path = Path(args.dataset_report).resolve()
     examples, dataset_report = load_sft_examples(
@@ -150,12 +184,13 @@ def main() -> None:
         import torch
         import transformers
         import trl
-        from peft import LoraConfig
-        from transformers import AutoTokenizer
+        from peft import LoraConfig, PeftModel
+        from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
         from trl import SFTConfig, SFTTrainer
     except ImportError as exc:
         raise SystemExit(f"SFT dependencies are unavailable: {exc}") from exc
 
+    set_seed(args.seed)
     tokenizer = AutoTokenizer.from_pretrained(
         model_path,
         local_files_only=True,
@@ -174,15 +209,24 @@ def main() -> None:
     report: dict[str, Any] = {
         "schema_version": 1,
         "model_path": str(model_path),
+        "initial_adapter_path": str(initial_adapter) if initial_adapter else None,
         "dataset_path": str(dataset_path),
         "dataset_sha256": hashlib.sha256(dataset_path.read_bytes()).hexdigest(),
+        "dataset_report_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
         "dataset_schema": dataset_report["dataset_schema"],
         "dataset_task_set": dataset_report["task_set"],
         "dataset_contains_answers": dataset_report["contains_answers"],
+        "dataset_answer_source": dataset_report["answer_source"],
+        "dataset_answer_sources": sorted(_dataset_answer_sources(dataset_report)),
         "prompt_version": dataset_report["prompt_version"],
         "action_protocol": dataset_report.get("action_protocol", "model-policy-json"),
         "example_count": len(examples),
         "token_lengths": token_lengths,
+        "max_length": args.max_length,
+        "max_steps": args.max_steps,
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "learning_rate": args.learning_rate,
+        "seed": args.seed,
         "torch_version": torch.__version__,
         "transformers_version": transformers.__version__,
         "trl_version": trl.__version__,
@@ -191,13 +235,25 @@ def main() -> None:
         "training_performed": False,
     }
     if not args.train:
+        if args.report_output:
+            preflight_path = Path(args.report_output)
+            if preflight_path.exists():
+                raise SystemExit(f"refusing to overwrite preflight report: {preflight_path}")
+            preflight_path.parent.mkdir(parents=True, exist_ok=True)
+            preflight_path.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is required for SFT training")
 
     output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if output_dir.exists():
+        raise SystemExit(f"refusing to overwrite SFT output directory: {output_dir}")
+    output_dir.mkdir(parents=True)
+    torch.cuda.reset_peak_memory_stats()
+    started_at = time.monotonic()
     training_args = SFTConfig(
         output_dir=str(output_dir),
         max_steps=args.max_steps,
@@ -207,11 +263,15 @@ def main() -> None:
         bf16=True,
         gradient_checkpointing=True,
         use_cache=False,
-        model_init_kwargs={
-            "dtype": "bfloat16",
-            "local_files_only": True,
-            "trust_remote_code": False,
-        },
+        model_init_kwargs=(
+            None
+            if initial_adapter
+            else {
+                "dtype": "bfloat16",
+                "local_files_only": True,
+                "trust_remote_code": False,
+            }
+        ),
         max_length=args.max_length,
         truncation_mode="keep_start",
         completion_only_loss=True,
@@ -222,7 +282,8 @@ def main() -> None:
         report_to="none",
         seed=args.seed,
     )
-    peft_config = LoraConfig(
+    trainer_model: Any = str(model_path)
+    peft_config: LoraConfig | None = LoraConfig(
         r=16,
         lora_alpha=32,
         lora_dropout=0.05,
@@ -230,8 +291,21 @@ def main() -> None:
         task_type="CAUSAL_LM",
         target_modules="all-linear",
     )
+    if initial_adapter:
+        base_model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            dtype="bfloat16",
+            local_files_only=True,
+            trust_remote_code=False,
+        )
+        trainer_model = PeftModel.from_pretrained(
+            base_model,
+            initial_adapter,
+            is_trainable=True,
+        )
+        peft_config = None
     trainer = SFTTrainer(
-        model=str(model_path),
+        model=trainer_model,
         args=training_args,
         train_dataset=Dataset.from_list(training_rows),
         processing_class=tokenizer,
@@ -250,6 +324,7 @@ def main() -> None:
     )
     grad_norm = _metric_number(final_metrics.get("grad_norm"))
     report["training_performed"] = True
+    report["elapsed_seconds"] = round(time.monotonic() - started_at, 3)
     report["optimizer_steps"] = trainer.state.global_step
     report["effective_update"] = bool(grad_norm is not None and grad_norm > 0.0)
     report["training_metrics"] = {
@@ -257,6 +332,19 @@ def main() -> None:
         "loss": _metric_number(final_metrics.get("loss")),
         "grad_norm": grad_norm,
     }
+    report["step_log_history"] = trainer.state.log_history
+    report["peak_cuda_memory_bytes"] = int(torch.cuda.max_memory_allocated())
+    report["initial_adapter_weights_sha256"] = (
+        _optional_file_sha256(initial_adapter / "adapter_model.safetensors")
+        if initial_adapter
+        else None
+    )
+    report["final_adapter_weights_sha256"] = _optional_file_sha256(
+        adapter_path / "adapter_model.safetensors"
+    )
+    report["adapter_weights_changed"] = (
+        report["initial_adapter_weights_sha256"] != report["final_adapter_weights_sha256"]
+    )
     report["output_dir"] = str(output_dir)
     report["adapter_path"] = str(adapter_path)
     (output_dir / "training-report.json").write_text(
@@ -274,8 +362,23 @@ def _validate_dataset_report(report: dict[str, Any]) -> None:
         raise SFTTrainingError("SFT dataset report must be train-only")
     if report.get("contains_answers") is not True:
         raise SFTTrainingError("SFT dataset report must explicitly declare contains_answers=true")
-    if report.get("answer_source") != "official_swe_gym_gold_patch":
-        raise SFTTrainingError("SFT dataset report has an unsupported answer source")
+    supported_sources = {
+        "official_swe_gym_gold_patch",
+        SEMANTIC_RECOVERY_ANSWER_SOURCE,
+    }
+    answer_sources = report.get("answer_sources")
+    if answer_sources is None:
+        if report.get("answer_source") not in supported_sources:
+            raise SFTTrainingError("SFT dataset report has an unsupported answer source")
+    else:
+        if (
+            not isinstance(answer_sources, list)
+            or len(answer_sources) < 2
+            or len(set(answer_sources)) != len(answer_sources)
+            or any(source not in supported_sources for source in answer_sources)
+            or report.get("answer_source") != MIXED_AUDITED_ANSWER_SOURCE
+        ):
+            raise SFTTrainingError("SFT dataset report has invalid mixed answer sources")
     expected_prompt = (
         GRPO_SFT_PROMPT_VERSION if schema == GRPO_SFT_SCHEMA else PROMPT_VERSION
     )
@@ -300,6 +403,7 @@ def _validate_sft_example(
     *,
     dataset_schema: str,
     prompt_version: str,
+    answer_sources: set[str],
 ) -> None:
     if not isinstance(example, dict) or example.get("schema_version") != 1:
         raise SFTTrainingError(f"invalid SFT schema on row {line_number}")
@@ -307,8 +411,8 @@ def _validate_sft_example(
         raise SFTTrainingError(f"SFT row {line_number} is outside the train split")
     if example.get("contains_answers") is not True:
         raise SFTTrainingError(f"SFT row {line_number} does not declare contains_answers=true")
-    if example.get("answer_source") != "official_swe_gym_gold_patch":
-        raise SFTTrainingError(f"SFT row {line_number} has an unsupported answer source")
+    if example.get("answer_source") not in answer_sources:
+        raise SFTTrainingError(f"SFT row {line_number} answer source disagrees with its report")
     if example.get("prompt_version") != prompt_version:
         raise SFTTrainingError(f"SFT row {line_number} has a stale prompt version")
     example_id = example.get("example_id")
@@ -384,6 +488,19 @@ def _load_json_object(path: Path, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise SFTTrainingError(f"{label} must be a JSON object")
     return value
+
+
+def _dataset_answer_sources(report: dict[str, Any]) -> set[str]:
+    sources = report.get("answer_sources")
+    if sources is None:
+        return {str(report["answer_source"])}
+    return set(sources)
+
+
+def _optional_file_sha256(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _validate_args(args: argparse.Namespace) -> None:

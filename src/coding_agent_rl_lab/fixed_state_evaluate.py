@@ -14,6 +14,7 @@ from .contracts import AgentAction
 from .grpo_evaluate import summarize
 from .grpo_remote import RemoteGRPOCodingEnvironment, add_parent_path_evidence
 from .grpo_train import configure_tool_response_parsing, probe_bare_json_tool_parsing, read_worker_token
+from .lora_inference import merge_lora_adapter_for_inference
 
 
 class FixedStateEvaluationError(RuntimeError):
@@ -29,26 +30,46 @@ def main() -> None:
     parser.add_argument("--worker-base-url", default="http://127.0.0.1:9011")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--seed", type=int, required=True)
-    parser.add_argument("--max-completion-length", type=int, default=2048)
-    parser.add_argument("--max-tool-calling-iterations", type=int, default=8)
+    parser.add_argument("--max-completion-length", type=int, default=4096)
+    parser.add_argument("--max-tool-calling-iterations", type=int, default=12)
+    parser.add_argument("--training-states-only", action="store_true")
+    parser.add_argument("--expected-context-count", type=int)
+    parser.add_argument("--diagnostic-scope")
+    parser.add_argument("--stop-gate")
+    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     output = Path(args.output_dir)
-    if output.exists():
+    if output.exists() and not args.resume:
         raise FixedStateEvaluationError(f"refusing to overwrite output directory: {output}")
+    if args.resume and not (output / "report.json").is_file():
+        raise FixedStateEvaluationError("resume requires an existing report.json")
     contexts_path = Path(args.contexts)
     contexts = _load_contexts(contexts_path)
-    if len(contexts) != 4:
-        raise FixedStateEvaluationError("fixed-state diagnostic requires exactly four contexts")
+    if args.training_states_only:
+        contexts = [context for context in contexts if context["used_for_training"]]
+    expected_context_count = args.expected_context_count
+    if expected_context_count is None:
+        expected_context_count = 3 if args.training_states_only else 4
+    if expected_context_count <= 0:
+        raise FixedStateEvaluationError("expected context count must be positive")
+    if len(contexts) != expected_context_count:
+        raise FixedStateEvaluationError(
+            f"fixed-state diagnostic requires exactly {expected_context_count} contexts"
+        )
     adapter = Path(args.adapter_path).resolve()
     before = _sha256(adapter / "adapter_model.safetensors")
     token = read_worker_token(Path(args.worker_token_file))
-    output.mkdir(parents=True)
+    output.mkdir(parents=True, exist_ok=args.resume)
     manifest = {
         "schema_version": 1,
         "evaluation_kind": "fixed-real-state-continuation-diagnostic",
-        "diagnostic_scope": (
-            "three training-state fit checks plus one unseen-session navigation state; "
-            "not held-out edit-only performance"
+        "diagnostic_scope": args.diagnostic_scope or (
+            "three training-state fit checks only"
+            if args.training_states_only
+            else (
+                "three training-state fit checks plus one unseen-session navigation state; "
+                "not held-out edit-only performance"
+            )
         ),
         "model_path": str(Path(args.model_path).resolve()),
         "adapter_path": str(adapter),
@@ -57,26 +78,32 @@ def main() -> None:
         "contexts_sha256": _sha256(contexts_path),
         "state_ids": [row["state_id"] for row in contexts],
         "seed": args.seed,
-        "planned_trial_count": 4,
+        "planned_trial_count": len(contexts),
         "budget": {
             "max_completion_length": args.max_completion_length,
             "max_tool_calling_iterations": args.max_tool_calling_iterations,
-            "temperature": 1.0,
-            "top_p": 0.95,
+            "decoding": "greedy",
             "continuations_per_state": 1,
         },
-        "protocol": "TRL bare-JSON tools with navigation-first-v4 parent-path evidence",
-        "stop_gate": "candidate >=2/4 strict and strictly above SFT60 baseline",
+        "protocol": (
+            "TRL bare-JSON tools with navigation-first-v4 parent-path evidence; "
+            "tool schemas and structured tool-call history v2"
+        ),
+        "stop_gate": args.stop_gate or "candidate >=2/4 strict and strictly above SFT60 baseline",
     }
-    (output / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    if args.resume:
+        previous_manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+        if previous_manifest != manifest:
+            raise FixedStateEvaluationError("resume manifest does not match frozen evaluation")
+    else:
+        (output / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
 
     import torch
     import transformers
     import trl
     from datasets import Dataset
-    from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
     from trl import GRPOConfig, GRPOTrainer
 
@@ -87,10 +114,12 @@ def main() -> None:
         tokenizer, lambda active, ids, *, prefix: active.parse_response(ids, prefix=prefix)
     ):
         raise FixedStateEvaluationError("bare JSON parser probe failed")
+    torch.cuda.reset_peak_memory_stats()
     model = AutoModelForCausalLM.from_pretrained(
         args.model_path, dtype=torch.bfloat16, local_files_only=True
     )
-    model = PeftModel.from_pretrained(model, adapter, is_trainable=False)
+    model.to("cuda:0")
+    adapter_merge = merge_lora_adapter_for_inference(model, adapter)
     model.requires_grad_(False)
     model.eval()
 
@@ -152,22 +181,49 @@ def main() -> None:
         train_dataset=Dataset.from_list([contexts[0]]),
         environment_factory=factory,
     )
-    report: dict[str, Any] = {
-        **manifest,
-        "training_performed": False,
-        "run_complete": False,
-        "versions": {
-            "torch": torch.__version__,
-            "transformers": transformers.__version__,
-            "trl": trl.__version__,
-        },
-        "states": [],
-    }
+    trainer.generation_config.do_sample = False
+    trainer.generation_config.temperature = None
+    trainer.generation_config.top_p = None
+    trainer.generation_config.top_k = None
+    trainer.generation_config.min_p = None
+    trainer.generation_kwargs.update(
+        {
+            "do_sample": False,
+            "temperature": None,
+            "top_p": None,
+            "top_k": None,
+            "min_p": None,
+        }
+    )
+    if args.resume:
+        report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+        for key, value in manifest.items():
+            if report.get(key) != value:
+                raise FixedStateEvaluationError(f"resume report disagrees on {key}")
+    else:
+        report = {
+            **manifest,
+            "training_performed": False,
+            "run_complete": False,
+            "versions": {
+                "torch": torch.__version__,
+                "transformers": transformers.__version__,
+                "trl": trl.__version__,
+            },
+            "adapter_merge": adapter_merge,
+            "states": [],
+        }
     _checkpoint(output, report)
+    completed_state_ids = {entry["state_id"] for entry in report["states"]}
     try:
         for index, context in enumerate(contexts):
             state_id = context["state_id"]
             audit_path = output / f"{state_id}-reward-audit.jsonl"
+            if state_id in completed_state_ids:
+                records = _jsonl(audit_path)
+                if len(records) != 1 or records[0].get("task_id") != context["task_id"]:
+                    raise FixedStateEvaluationError(f"{state_id}: completed audit is invalid")
+                continue
             for environment in environments:
                 environment._reward_audit_path = audit_path
             active_audit_path = audit_path
@@ -205,6 +261,7 @@ def main() -> None:
         report["summary"] = summarize(all_records)
         report["adapter_unchanged"] = before == _sha256(adapter / "adapter_model.safetensors")
         report["optimizer_steps"] = trainer.state.global_step
+        report["peak_cuda_memory_bytes"] = int(torch.cuda.max_memory_allocated())
         if not report["adapter_unchanged"] or report["optimizer_steps"] != 0:
             raise FixedStateEvaluationError("evaluation mutated weights or performed optimizer steps")
         report["run_complete"] = True
@@ -281,10 +338,17 @@ def _load_contexts(path: Path) -> list[dict[str, Any]]:
     return contexts
 
 
-def _test_status(observation: str) -> tuple[str, tuple[str, ...]]:
+def _test_status(observation: str) -> tuple[str, tuple[tuple[str, str], ...]]:
     result = "passed" if observation.startswith("Tests passed") else "failed"
-    ids = tuple(sorted(re.findall(r"(?m)^(?:FAILED|PASSED)\s+([^\s]+)", observation)))
-    return result, ids
+    statuses = tuple(
+        sorted(
+            (status, node_id)
+            for status, node_id in re.findall(
+                r"(?m)^(FAILED|PASSED|ERROR)\s+(tests/[^\s]+)", observation
+            )
+        )
+    )
+    return result, statuses
 
 
 def _jsonl(path: Path) -> list[dict[str, Any]]:

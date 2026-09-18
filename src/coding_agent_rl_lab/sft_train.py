@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import time
 from pathlib import Path
 from typing import Any, Iterable
 
 from .model_policy import PROMPT_VERSION, OpenAICompatiblePolicy
+from .grpo_remote import RemoteGRPOCodingEnvironment
 from .sft_grpo import GRPO_ACTION_PROTOCOL, GRPO_SFT_PROMPT_VERSION, GRPO_SFT_SCHEMA
 from .sft_semantic_recovery import (
     MIXED_AUDITED_ANSWER_SOURCE,
@@ -68,13 +70,25 @@ def load_sft_examples(
 def prepare_prompt_completion_rows(
     examples: Iterable[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    return [
-        {
-            "prompt": example["messages"][:-1],
-            "completion": [example["messages"][-1]],
+    examples = list(examples)
+    grpo_tools = _grpo_tool_schemas() if any(
+        example.get("action_protocol") == GRPO_ACTION_PROTOCOL for example in examples
+    ) else None
+    rows: list[dict[str, Any]] = []
+    for example in examples:
+        is_grpo = example.get("action_protocol") == GRPO_ACTION_PROTOCOL
+        prompt = [
+            _structured_grpo_history_message(message) if is_grpo else dict(message)
+            for message in example["messages"][:-1]
+        ]
+        row = {
+            "prompt": prompt,
+            "completion": [dict(example["messages"][-1])],
         }
-        for example in examples
-    ]
+        if is_grpo:
+            row["tools"] = grpo_tools
+        rows.append(row)
+    return rows
 
 
 def build_token_length_report(
@@ -92,10 +106,12 @@ def build_token_length_report(
     for row in rows:
         prompt = row["prompt"]
         completion = row["completion"]
+        tools = row.get("tools")
         rendered = tokenizer.apply_chat_template(
             [*prompt, *completion],
             tokenize=False,
             add_generation_prompt=False,
+            tools=tools,
         )
         if not isinstance(rendered, str):
             raise SFTTrainingError("chat template must render text before token length inspection")
@@ -104,6 +120,7 @@ def build_token_length_report(
             prompt,
             tokenize=False,
             add_generation_prompt=True,
+            tools=tools,
         )
         if not isinstance(prompt_rendered, str):
             raise SFTTrainingError("chat template must render the prompt before token inspection")
@@ -134,6 +151,53 @@ def build_token_length_report(
     }
 
 
+def _grpo_tool_schemas() -> list[dict[str, Any]]:
+    try:
+        from transformers.utils import get_json_schema
+    except ImportError as exc:
+        raise SFTTrainingError(f"transformers tool schema support is unavailable: {exc}") from exc
+    environment = RemoteGRPOCodingEnvironment(
+        "http://127.0.0.1:1", "sft-schema-only-token", navigation_first=True
+    )
+    methods = [
+        member
+        for name, member in inspect.getmembers(environment, predicate=inspect.ismethod)
+        if name not in {"reset", "get_reward"} and not name.startswith("_")
+    ]
+    return [get_json_schema(method) for method in methods]
+
+
+def _structured_grpo_history_message(message: dict[str, Any]) -> dict[str, Any]:
+    copied = dict(message)
+    if copied.get("role") != "assistant" or "tool_calls" in copied:
+        return copied
+    content = copied.get("content")
+    if not isinstance(content, str):
+        return copied
+    try:
+        call = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise SFTTrainingError("GRPO assistant history is not a bare JSON tool call") from exc
+    if (
+        not isinstance(call, dict)
+        or not isinstance(call.get("name"), str)
+        or not isinstance(call.get("arguments"), dict)
+    ):
+        raise SFTTrainingError("GRPO assistant history has an invalid tool call")
+    return {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "type": "function",
+                "function": {
+                    "name": call["name"],
+                    "arguments": call["arguments"],
+                },
+            }
+        ],
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Preflight or train a train-only answer-supervised LoRA tool warm-start"
@@ -149,6 +213,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=61001)
+    parser.add_argument(
+        "--checkpoint-steps",
+        type=int,
+        help="Save model-only diagnostic checkpoints at this optimizer-step interval",
+    )
     parser.add_argument(
         "--report-output",
         help="Optional non-overwriting JSON path for tokenizer preflight evidence",
@@ -227,6 +296,7 @@ def main() -> None:
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
         "learning_rate": args.learning_rate,
         "seed": args.seed,
+        "checkpoint_steps": args.checkpoint_steps,
         "torch_version": torch.__version__,
         "transformers_version": transformers.__version__,
         "trl_version": trl.__version__,
@@ -278,7 +348,10 @@ def main() -> None:
         packing=False,
         logging_steps=1,
         logging_first_step=True,
-        save_strategy="no",
+        save_strategy="steps" if args.checkpoint_steps else "no",
+        save_steps=args.checkpoint_steps or 500,
+        save_only_model=True,
+        save_total_limit=(args.max_steps // args.checkpoint_steps if args.checkpoint_steps else None),
         report_to="none",
         seed=args.seed,
     )
@@ -514,6 +587,11 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise SystemExit("--gradient-accumulation-steps must be positive")
     if args.learning_rate <= 0:
         raise SystemExit("--learning-rate must be positive")
+    checkpoint_steps = getattr(args, "checkpoint_steps", None)
+    if checkpoint_steps is not None and (
+        checkpoint_steps <= 0 or checkpoint_steps > args.max_steps
+    ):
+        raise SystemExit("--checkpoint-steps must be positive and no larger than --max-steps")
 
 
 def _metric_number(value: Any) -> float | None:

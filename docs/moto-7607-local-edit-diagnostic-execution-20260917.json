@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-17",
+  "decision": "stop-before-d2-training-or-grpo",
+  "reason": "D1 produced zero verifier-improving edits",
+  "model": "Qwen2.5-Coder-7B-Instruct",
+  "adapter": "P2 step12",
+  "adapter_sha256": "9370e928903c5b59096a7add0bd04c55908574b9ee85ab155678eedfb6d376db",
+  "adapter_unchanged": true,
+  "seed": 123401,
+  "edit_context_count": 7,
+  "edit_contexts_sha256": "82a460a0405c37c7386feb20eecbe6f59540566bddb9334ab2a677bc7574be52",
+  "staged_context_count": 9,
+  "staged_contexts_sha256": "9b1d28e30695c0b800fcf945a7ecb72bcb7ec11d507f26eb80aba364d854a926",
+  "counts": {
+    "trial_count": 7,
+    "parsed_action_count": 4,
+    "edit_action_count": 4,
+    "edit_applied_count": 4,
+    "target_file_edit_applied_count": 3,
+    "verifier_improving_edit_count": 0,
+    "strict_success_count": 0,
+    "exact_teacher_action_match_count": 0
+  },
+  "failure_categories": {
+    "unparseable-tool-action": 3,
+    "applied-but-semantically-wrong": 4
+  },
+  "all_generations_below_token_limit": true,
+  "peak_cuda_memory_bytes": 16852131328,
+  "d2_executed": false,
+  "training_executed": false,
+  "grpo_executed": false,
+  "remote_evidence_directory": "/root/autodl-tmp/moto-7607-local-edit-diagnostic-20260917",
+  "final_archive": "/root/autodl-tmp/moto-7607-local-edit-diagnostic-evidence-20260917-v2.tar.gz",
+  "final_archive_sha256": "79d70924e95eafe92936328d877c05325f0599e1e9c45c38e9bea2f8c36911c7",
+  "manifest_file_count": 37
+}

@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-16",
+  "task_id": "getmoto__moto-7607",
+  "decision": "stop_after_fixed_state_gate",
+  "grpo_started": false,
+  "end_to_end_seed122100_started": false,
+  "stage_a": {
+    "session_count": 20,
+    "incomplete_session_count": 0,
+    "primary_blocker_counts": {
+      "navigation_not_reached": 18,
+      "insufficient_reading": 1,
+      "semantic_edit_error": 1
+    },
+    "callback_reached_count": 2,
+    "full_target_function_read_count": 2,
+    "strict_success_count": 0,
+    "failure_reduction_count": 0,
+    "new_failure_session_count": 12,
+    "latest_seed121100_regression_cause": {
+      "affected_rollouts": 3,
+      "indentation_error_rollouts": 2,
+      "syntax_error_rollouts": 1,
+      "interpretation": "Unrelated broad edits broke shared imports; these were not regressions after a correct callback fix."
+    },
+    "verifier_selfcheck": {
+      "base_commit": "ca24f65f2ff415a7eb7eddcea3bd8173e5d5f920",
+      "docker_image_id": "sha256:796db395a9d091f009e5d97e903c836a3431afba80354f67795f80c3710a9311",
+      "baseline_failure_count": 1,
+      "gold_final_failure_count": 0,
+      "gold_strict_reward": 1.0,
+      "new_failure_count": 0
+    }
+  },
+  "stage_b": {
+    "real_state_count": 3,
+    "verified_recovery_count": 3,
+    "strict_rewards": [1.0, 1.0, 1.0],
+    "recovery_action_example_count": 18,
+    "dataset_sha256": "c90ba181e77b6950e005eb4131c3f8a33901a37aa3a1aecba969532795aa5b96",
+    "training_mix": {
+      "example_count": 16,
+      "semantic_recovery_count": 12,
+      "audited_tool_count": 4,
+      "state_example_counts": [4, 4, 4],
+      "dataset_sha256": "e28584f553b9bd664cc20ee5e4019bdaae88d25aa786e755f97dafaa2a71ebcf"
+    },
+    "tokenizer_preflight": {
+      "max_full_tokens": 7245,
+      "max_supervised_tokens": 269,
+      "total_supervised_tokens": 1613,
+      "max_length": 16384,
+      "over_max_length_count": 0
+    }
+  },
+  "stage_c": {
+    "initial_adapter_sha256": "55c947e02b404c3d150e3a2eabd4f55dd50c34641d8d68495f7fbb00c573081c",
+    "candidate_adapter_sha256": "312c607bc73643182d2fbdffe216875ab5b306d5dadfe1c91ec1f458072cdfc6",
+    "seed": 122001,
+    "optimizer_steps": 4,
+    "epochs": 1.0,
+    "learning_rate": 0.00002,
+    "gradient_accumulation_steps": 4,
+    "train_loss": 0.4465268850326538,
+    "final_grad_norm": 0.42224371433258057,
+    "effective_update": true,
+    "elapsed_seconds": 42.375,
+    "peak_cuda_memory_bytes": 21065972736
+  },
+  "stage_d_fixed_state": {
+    "scope": "Three training-state fit checks plus one unseen-session navigation state; not a held-out edit-only set.",
+    "seed": 122050,
+    "planned_valid_trials_per_adapter": 4,
+    "sft60": {
+      "completed_valid_trials": 4,
+      "invalid_attempts": 0,
+      "strict_successes": 0,
+      "failure_reductions": 0,
+      "patches_created": 2,
+      "valid_patches": 1,
+      "new_failure_trials": 1,
+      "mean_shaped_reward": 0.0075,
+      "adapter_unchanged": true,
+      "optimizer_steps": 0
+    },
+    "candidate": {
+      "completed_valid_trials": 4,
+      "invalid_attempts": 2,
+      "invalid_attempt_causes": [
+        "Foreground evaluation was interrupted by new user input after a partial third-state session.",
+        "First strict resume attempt encountered a dropped loopback SSH reverse tunnel before session creation."
+      ],
+      "strict_successes": 0,
+      "failure_reductions": 0,
+      "patches_created": 2,
+      "valid_patches": 1,
+      "new_failure_trials": 1,
+      "mean_shaped_reward": 0.0075,
+      "adapter_unchanged": true,
+      "optimizer_steps": 0
+    },
+    "gate": "Candidate needed at least 2/4 strict successes and to exceed baseline.",
+    "gate_passed": false
+  },
+  "compute": {
+    "gpu": "NVIDIA vGPU-48GB (49140 MiB)",
+    "recorded_training_and_valid_eval_seconds": 325.439,
+    "note": "This excludes model-loading time and two invalid candidate attempts."
+  },
+  "remote_evidence_directory": "/root/autodl-tmp/moto-7607-semantic-recovery-20260916",
+  "remote_evidence_archive": "/root/autodl-tmp/moto-7607-semantic-recovery-evidence-20260916.tar.gz",
+  "remote_evidence_archive_sha256": "f9fb9a2450d20fd210d9dc0ad87cd3f1a1de02e579839a092627e0b1c8b18734",
+  "candidate_adapter_path": "/root/autodl-tmp/sft60-semantic-recovery-seed122001/final-adapter",
+  "stop_reason": "Candidate produced 0/4 strict success and 0/4 failure reduction in the first frozen paired gate, matching SFT60 and failing the required >=2/4 improvement threshold."
+}

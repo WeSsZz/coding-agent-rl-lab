@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-17",
+  "incomplete_archive": "/root/autodl-tmp/moto-7607-local-edit-diagnostic-evidence-20260917.tar.gz",
+  "incomplete_archive_sha256": "d70cd6a59da46f6ebae6e1e3fc2158c994c6844dc504bc21426d0c56ad16496f",
+  "incomplete_archive_size": "88K",
+  "reason": "The remote SHA-256 manifest helper was absent; the shell continued to create an archive without SHA256SUMS.txt.",
+  "disposition": "Preserved without overwrite; not designated as final evidence. Final evidence uses a separately named v2 archive after manifest generation."
+}

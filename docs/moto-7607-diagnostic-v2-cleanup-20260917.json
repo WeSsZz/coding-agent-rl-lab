@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "completed": true,
+  "worker_pid": 1127921,
+  "worker_scope": "getmoto__moto-7607 only",
+  "worker_port": 9015,
+  "worker_stopped": true,
+  "tunnel_pid": 1128116,
+  "tunnel_stopped": true,
+  "ubuntu_running_docker_containers": 0,
+  "ubuntu_worker_token_removed": true,
+  "autodl_worker_token_removed": true,
+  "autodl_gpu_memory_used_mib": 1,
+  "grpo_started": false,
+  "cloud_instance_billing_state": "not changed by this run"
+}

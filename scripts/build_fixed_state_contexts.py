@@ -154,12 +154,19 @@ def _execute(environment: RemoteGRPOCodingEnvironment, raw: dict[str, Any]) -> s
     return getattr(environment, action.kind.value)(**action.arguments)
 
 
-def _test_status(observation: str) -> tuple[str, tuple[str, ...]]:
+def _test_status(observation: str) -> tuple[str, tuple[tuple[str, str], ...]]:
     import re
 
     result = "passed" if observation.startswith("Tests passed") else "failed"
-    ids = tuple(sorted(re.findall(r"(?m)^(?:FAILED|PASSED)\s+([^\s]+)", observation)))
-    return result, ids
+    statuses = tuple(
+        sorted(
+            (status, node_id)
+            for status, node_id in re.findall(
+                r"(?m)^(FAILED|PASSED|ERROR)\s+(tests/[^\s]+)", observation
+            )
+        )
+    )
+    return result, statuses
 
 
 def _jsonl(path: Path) -> list[dict[str, Any]]:

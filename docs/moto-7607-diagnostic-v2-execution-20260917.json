@@ -1,0 +1,1361 @@
+{
+  "schema_version": 1,
+  "completed": true,
+  "task_id": "getmoto__moto-7607",
+  "gpu_budget": "single 48G GPU",
+  "evidence": {
+    "remote_directory": "/root/autodl-tmp/moto-7607-next-diagnostic-v2-20260916",
+    "archive_path": "/root/autodl-tmp/moto-7607-next-diagnostic-v2-evidence-20260917.tar.gz",
+    "archive_sha256": "7a4a5c255238d59c1b48b8fe0c2bb02a3f06740a5df7024f9b2cac6788ab7c77",
+    "archive_size_kib": 264,
+    "training_output": "/root/autodl-tmp/sft60-protocol-v2-full18-12step-seed123201"
+  },
+  "p0": {
+    "gate": {
+      "labels_correct": true,
+      "training_rollout_rendering_equal": true,
+      "history_representation_matches_rollout_structured_calls": true,
+      "verifier_positive_and_negative_controls_pass": true,
+      "p0_passed": true
+    },
+    "label_audit": {
+      "completion_only_loss_reconstructed_from_installed_trl": true,
+      "boundary_mismatch_count": 0,
+      "target_decode_mismatch_count": 0,
+      "all_mask_count": 0,
+      "over_16384_count": 0,
+      "supervised_token_total": 1613,
+      "supervised_token_min": 12,
+      "supervised_token_max": 269
+    },
+    "rendering_contract": {
+      "sft_rows_have_tools_field": true,
+      "sft_prompt_tokens": 4449,
+      "rollout_prompt_tokens_with_tools": 4449,
+      "rendered_prompts_equal": true,
+      "history_assistant_bare_content_count": 0,
+      "history_assistant_structured_tool_call_count": 100
+    },
+    "transition_coverage": {
+      "teacher_action_total": 18,
+      "selected_recovery_target_total": 12,
+      "by_state": {
+        "902159f7f97c4e0d977400a1304d8576": {
+          "teacher_action_count": 6,
+          "teacher_action_kinds": [
+            "search_text",
+            "read_file",
+            "replace_text",
+            "read_file",
+            "replace_text",
+            "run_tests"
+          ],
+          "selected_target_indexes": [
+            2,
+            3,
+            4,
+            5
+          ],
+          "unselected_target_indexes": [
+            0,
+            1
+          ],
+          "selected_target_kinds": [
+            "replace_text",
+            "read_file",
+            "replace_text",
+            "run_tests"
+          ],
+          "unselected_target_kinds": [
+            "search_text",
+            "read_file"
+          ]
+        },
+        "468f8f521e6c4694b36ff2fb6c828f13": {
+          "teacher_action_count": 4,
+          "teacher_action_kinds": [
+            "replace_text",
+            "read_file",
+            "replace_text",
+            "run_tests"
+          ],
+          "selected_target_indexes": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "unselected_target_indexes": [],
+          "selected_target_kinds": [
+            "replace_text",
+            "read_file",
+            "replace_text",
+            "run_tests"
+          ],
+          "unselected_target_kinds": []
+        },
+        "8ac920f9551c4f61a6bbf5ab56fa65f3": {
+          "teacher_action_count": 8,
+          "teacher_action_kinds": [
+            "read_file",
+            "replace_lines",
+            "search_text",
+            "read_file",
+            "replace_text",
+            "read_file",
+            "replace_text",
+            "run_tests"
+          ],
+          "selected_target_indexes": [
+            1,
+            4,
+            6,
+            7
+          ],
+          "unselected_target_indexes": [
+            0,
+            2,
+            3,
+            5
+          ],
+          "selected_target_kinds": [
+            "replace_lines",
+            "replace_text",
+            "replace_text",
+            "run_tests"
+          ],
+          "unselected_target_kinds": [
+            "read_file",
+            "search_text",
+            "read_file",
+            "read_file"
+          ]
+        }
+      }
+    }
+  },
+  "p1_target_scores": {
+    "A_7b_sft60": {
+      "adapter_weights_sha256": "55c947e02b404c3d150e3a2eabd4f55dd50c34641d8d68495f7fbb00c573081c",
+      "example_count": 18,
+      "mean_nll": 0.5720873640643226,
+      "mean_token_accuracy": 0.8703614208433363,
+      "by_action_group": {
+        "edit_or_repair": {
+          "count": 7,
+          "mean_nll": 0.5319470550332751,
+          "mean_token_accuracy": 0.8854285904339382
+        },
+        "navigate_or_read": {
+          "count": 8,
+          "mean_nll": 0.4930356852710247,
+          "mean_token_accuracy": 0.8710631653666496
+        },
+        "verify": {
+          "count": 3,
+          "mean_nll": 0.8765525619188944,
+          "mean_token_accuracy": 0.8333333730697632
+        }
+      },
+      "peak_cuda_memory_bytes": 16449400832,
+      "elapsed_seconds": 15.659
+    },
+    "B_7b_semantic_old": {
+      "adapter_weights_sha256": "312c607bc73643182d2fbdffe216875ab5b306d5dadfe1c91ec1f458072cdfc6",
+      "example_count": 18,
+      "mean_nll": 0.5471788744131724,
+      "mean_token_accuracy": 0.8705006274912093,
+      "by_action_group": {
+        "edit_or_repair": {
+          "count": 7,
+          "mean_nll": 0.4994008072784969,
+          "mean_token_accuracy": 0.8824642896652222
+        },
+        "navigate_or_read": {
+          "count": 8,
+          "mean_nll": 0.469092283397913,
+          "mean_token_accuracy": 0.8739701434969902
+        },
+        "verify": {
+          "count": 3,
+          "mean_nll": 0.8668919404347738,
+          "mean_token_accuracy": 0.8333333730697632
+        }
+      },
+      "peak_cuda_memory_bytes": 16449400832,
+      "elapsed_seconds": 15.596
+    },
+    "C_14b_parent_path": {
+      "adapter_weights_sha256": "e3301338886598a9d5e6c9c683502c49204b7692ece77ae30916950da380d5d2",
+      "example_count": 18,
+      "mean_nll": 0.7662033587694168,
+      "mean_token_accuracy": 0.8491621646616194,
+      "by_action_group": {
+        "edit_or_repair": {
+          "count": 7,
+          "mean_nll": 0.6441693774291447,
+          "mean_token_accuracy": 0.8597311547824315
+        },
+        "navigate_or_read": {
+          "count": 8,
+          "mean_nll": 0.6946423873305321,
+          "mean_token_accuracy": 0.8458500951528549
+        },
+        "verify": {
+          "count": 3,
+          "mean_nll": 1.241778572400411,
+          "mean_token_accuracy": 0.8333333730697632
+        }
+      },
+      "peak_cuda_memory_bytes": 30715055104,
+      "elapsed_seconds": 33.937
+    }
+  },
+  "p1_greedy_fixed_states": {
+    "A_7b_sft60": {
+      "summary": {
+        "trial_count": 4,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.0,
+        "patches_created": 1,
+        "valid_patches": 0,
+        "verified_patches": 1,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 1,
+        "trials_with_violations": 0
+      },
+      "adapter_unchanged": true,
+      "optimizer_steps": 0,
+      "peak_cuda_memory_bytes": 17081896960,
+      "states": [
+        {
+          "state_id": "902159f7f97c4e0d977400a1304d8576",
+          "used_for_training": true,
+          "reward": 0.0,
+          "reward_components": {
+            "baseline_failure_count": 1,
+            "final_failure_count": 1,
+            "new_failure_count": 0,
+            "patch_created": false,
+            "patch_valid": false,
+            "resolved_failure_count": 0,
+            "reward_version": "conservative-v2",
+            "strict_reward": 0.0,
+            "strict_success": false,
+            "training_reward": 0.0,
+            "verifier_run_after_patch": false,
+            "violations": []
+          },
+          "actions": [
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "StateTaskServiceAwsSdk"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+              }
+            },
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "FailureEventException"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+                "start_line": 67,
+                "end_line": 135
+              }
+            }
+          ]
+        },
+        {
+          "state_id": "468f8f521e6c4694b36ff2fb6c828f13",
+          "used_for_training": true,
+          "reward": 0.0,
+          "reward_components": {
+            "baseline_failure_count": 1,
+            "final_failure_count": 1,
+            "new_failure_count": 0,
+            "patch_created": false,
+            "patch_valid": false,
+            "resolved_failure_count": 0,
+            "reward_version": "conservative-v2",
+            "strict_reward": 0.0,
+            "strict_success": false,
+            "training_reward": 0.0,
+            "verifier_run_after_patch": false,
+            "violations": []
+          },
+          "actions": [
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "StateTaskServiceAwsSdk"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+                "start_line": 25,
+                "end_line": 38
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+                "start_line": 10,
+                "end_line": 54
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_callback.py"
+              }
+            }
+          ]
+        },
+        {
+          "state_id": "8ac920f9551c4f61a6bbf5ab56fa65f3",
+          "used_for_training": true,
+          "reward": 0.0,
+          "reward_components": {
+            "baseline_failure_count": 1,
+            "final_failure_count": 3,
+            "new_failure_count": 2,
+            "patch_created": true,
+            "patch_valid": false,
+            "resolved_failure_count": 0,
+            "reward_version": "conservative-v2",
+            "strict_reward": 0.0,
+            "strict_success": false,
+            "training_reward": 0.0,
+            "verifier_run_after_patch": true,
+            "violations": []
+          },
+          "actions": [
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "StateTaskServiceAwsSdk"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_callback.py"
+              }
+            },
+            {
+              "kind": "replace_lines",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+                "start_line": 52,
+                "end_line": 52,
+                "new": "        api_client = boto_client_for(\n            region=resource_runtime_part.region,\n            account=resource_runtime_part.account,\n            service=service_name,\n        )\n        response = getattr(api_client, api_action)(**normalised_parameters) or dict()\n\n        # Debugging line added for understanding parameters\n        print('Parameters sent to API:', normalised_parameters)\n\n        env.stack.append(response)\n"
+              }
+            },
+            {
+              "kind": "run_tests",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "state_id": "23d5c91e61994727884ba7783dcb201b",
+          "used_for_training": false,
+          "reward": 0.0,
+          "reward_components": {
+            "baseline_failure_count": 1,
+            "final_failure_count": 1,
+            "new_failure_count": 0,
+            "patch_created": false,
+            "patch_valid": false,
+            "resolved_failure_count": 0,
+            "reward_version": "conservative-v2",
+            "strict_reward": 0.0,
+            "strict_success": false,
+            "training_reward": 0.0,
+            "verifier_run_after_patch": false,
+            "violations": []
+          },
+          "actions": [
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "src/moto/stepfunctions/parser/asl/component/state/exec/execute_state.py",
+                "start_line": 130,
+                "end_line": 140
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "src/moto/stepfunctions/parser/asl/component/state/exec/execute_state.py",
+                "start_line": 100,
+                "end_line": 150
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "src/moto/stepfunctions/parsers/asl/component/state/exec/execute_state.py",
+                "start_line": 100,
+                "end_line": 150
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "src/moto/stepfunctions/parser/asl/component/state/exec/execute_state.py",
+                "start_line": 100,
+                "end_line": 150
+              }
+            },
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "StateTaskServiceAwsSdk"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "B_7b_semantic_old": {
+      "summary": {
+        "trial_count": 4,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.0,
+        "patches_created": 1,
+        "valid_patches": 0,
+        "verified_patches": 1,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 1,
+        "trials_with_violations": 0
+      },
+      "adapter_unchanged": true,
+      "optimizer_steps": 0,
+      "peak_cuda_memory_bytes": 17115877376,
+      "states": [
+        {
+          "state_id": "902159f7f97c4e0d977400a1304d8576",
+          "used_for_training": true,
+          "reward": 0.0,
+          "reward_components": {
+            "baseline_failure_count": 1,
+            "final_failure_count": 1,
+            "new_failure_count": 0,
+            "patch_created": false,
+            "patch_valid": false,
+            "resolved_failure_count": 0,
+            "reward_version": "conservative-v2",
+            "strict_reward": 0.0,
+            "strict_success": false,
+            "training_reward": 0.0,
+            "verifier_run_after_patch": false,
+            "violations": []
+          },
+          "actions": [
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "StateTaskServiceAwsSdk"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+              }
+            },
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "FailureEventException"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+                "start_line": 67,
+                "end_line": 135
+              }
+            }
+          ]
+        },
+        {
+          "state_id": "468f8f521e6c4694b36ff2fb6c828f13",
+          "used_for_training": true,
+          "reward": 0.0,
+          "reward_components": {
+            "baseline_failure_count": 1,
+            "final_failure_count": 1,
+            "new_failure_count": 0,
+            "patch_created": false,
+            "patch_valid": false,
+            "resolved_failure_count": 0,
+            "reward_version": "conservative-v2",
+            "strict_reward": 0.0,
+            "strict_success": false,
+            "training_reward": 0.0,
+            "verifier_run_after_patch": false,
+            "violations": []
+          },
+          "actions": [
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "StateTaskServiceAwsSdk"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+                "start_line": 25,
+                "end_line": 38
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+                "start_line": 10,
+                "end_line": 54
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_callback.py"
+              }
+            }
+          ]
+        },
+        {
+          "state_id": "8ac920f9551c4f61a6bbf5ab56fa65f3",
+          "used_for_training": true,
+          "reward": 0.0,
+          "reward_components": {
+            "baseline_failure_count": 1,
+            "final_failure_count": 3,
+            "new_failure_count": 2,
+            "patch_created": true,
+            "patch_valid": false,
+            "resolved_failure_count": 0,
+            "reward_version": "conservative-v2",
+            "strict_reward": 0.0,
+            "strict_success": false,
+            "training_reward": 0.0,
+            "verifier_run_after_patch": true,
+            "violations": []
+          },
+          "actions": [
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "StateTaskServiceAwsSdk"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_callback.py"
+              }
+            },
+            {
+              "kind": "replace_lines",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+                "start_line": 52,
+                "end_line": 52,
+                "new": "        api_client = boto_client_for(\n            region=resource_runtime_part.region,\n            account=resource_runtime_part.account,\n            service=service_name,\n        )\n        response = getattr(api_client, api_action)(**normalised_parameters) or dict()\n\n        # Debugging line added for understanding parameters\n        print('Parameters sent to API:', normalised_parameters)\n\n        env.stack.append(response)\n"
+              }
+            },
+            {
+              "kind": "run_tests",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "state_id": "23d5c91e61994727884ba7783dcb201b",
+          "used_for_training": false,
+          "reward": 0.0,
+          "reward_components": {
+            "baseline_failure_count": 1,
+            "final_failure_count": 1,
+            "new_failure_count": 0,
+            "patch_created": false,
+            "patch_valid": false,
+            "resolved_failure_count": 0,
+            "reward_version": "conservative-v2",
+            "strict_reward": 0.0,
+            "strict_success": false,
+            "training_reward": 0.0,
+            "verifier_run_after_patch": false,
+            "violations": []
+          },
+          "actions": [
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "src/moto/stepfunctions/parser/asl/component/state/exec/execute_state.py",
+                "start_line": 130,
+                "end_line": 140
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "src/moto/stepfunctions/parser/asl/component/state/exec/execute_state.py",
+                "start_line": 100,
+                "end_line": 150
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "src/moto/stepfunctions/parsers/asl/component/state/exec/execute_state.py",
+                "start_line": 100,
+                "end_line": 150
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "src/moto/stepfunctions/parser/asl/component/state/exec/execute_state.py",
+                "start_line": 100,
+                "end_line": 150
+              }
+            },
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "StateTaskServiceAwsSdk"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "C_14b_parent_path": {
+      "summary": {
+        "trial_count": 4,
+        "strict_successes": 0,
+        "mean_shaped_reward": 0.0,
+        "patches_created": 1,
+        "valid_patches": 0,
+        "verified_patches": 1,
+        "trials_resolving_failures": 0,
+        "trials_with_unknown_final_failure_count": 0,
+        "trials_with_new_failures": 1,
+        "trials_with_violations": 0
+      },
+      "adapter_unchanged": true,
+      "optimizer_steps": 0,
+      "peak_cuda_memory_bytes": 31647961088,
+      "states": [
+        {
+          "state_id": "902159f7f97c4e0d977400a1304d8576",
+          "used_for_training": true,
+          "reward": 0.0,
+          "reward_components": {
+            "baseline_failure_count": 1,
+            "final_failure_count": 1,
+            "new_failure_count": 0,
+            "patch_created": false,
+            "patch_valid": false,
+            "resolved_failure_count": 0,
+            "reward_version": "conservative-v2",
+            "strict_reward": 0.0,
+            "strict_success": false,
+            "training_reward": 0.0,
+            "verifier_run_after_patch": false,
+            "violations": []
+          },
+          "actions": [
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "StateTaskServiceAwsSdk"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+              }
+            },
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "FailureEventException"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+                "start_line": 67,
+                "end_line": 135
+              }
+            }
+          ]
+        },
+        {
+          "state_id": "468f8f521e6c4694b36ff2fb6c828f13",
+          "used_for_training": true,
+          "reward": 0.0,
+          "reward_components": {
+            "baseline_failure_count": 1,
+            "final_failure_count": 1,
+            "new_failure_count": 0,
+            "patch_created": false,
+            "patch_valid": false,
+            "resolved_failure_count": 0,
+            "reward_version": "conservative-v2",
+            "strict_reward": 0.0,
+            "strict_success": false,
+            "training_reward": 0.0,
+            "verifier_run_after_patch": false,
+            "violations": []
+          },
+          "actions": [
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "StateTaskServiceAwsSdk"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+                "start_line": 25,
+                "end_line": 38
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+                "start_line": 10,
+                "end_line": 54
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_callback.py"
+              }
+            }
+          ]
+        },
+        {
+          "state_id": "8ac920f9551c4f61a6bbf5ab56fa65f3",
+          "used_for_training": true,
+          "reward": 0.0,
+          "reward_components": {
+            "baseline_failure_count": 1,
+            "final_failure_count": 3,
+            "new_failure_count": 2,
+            "patch_created": true,
+            "patch_valid": false,
+            "resolved_failure_count": 0,
+            "reward_version": "conservative-v2",
+            "strict_reward": 0.0,
+            "strict_success": false,
+            "training_reward": 0.0,
+            "verifier_run_after_patch": true,
+            "violations": []
+          },
+          "actions": [
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "StateTaskServiceAwsSdk"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_callback.py"
+              }
+            },
+            {
+              "kind": "replace_lines",
+              "arguments": {
+                "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+                "start_line": 52,
+                "end_line": 52,
+                "new": "        api_client = boto_client_for(\n            region=resource_runtime_part.region,\n            account=resource_runtime_part.account,\n            service=service_name,\n        )\n        response = getattr(api_client, api_action)(**normalised_parameters) or dict()\n\n        # Debugging line added for understanding parameters\n        print('Parameters sent to API:', normalised_parameters)\n\n        env.stack.append(response)\n"
+              }
+            },
+            {
+              "kind": "run_tests",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "state_id": "23d5c91e61994727884ba7783dcb201b",
+          "used_for_training": false,
+          "reward": 0.0,
+          "reward_components": {
+            "baseline_failure_count": 1,
+            "final_failure_count": 1,
+            "new_failure_count": 0,
+            "patch_created": false,
+            "patch_valid": false,
+            "resolved_failure_count": 0,
+            "reward_version": "conservative-v2",
+            "strict_reward": 0.0,
+            "strict_success": false,
+            "training_reward": 0.0,
+            "verifier_run_after_patch": false,
+            "violations": []
+          },
+          "actions": [
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "src/moto/stepfunctions/parser/asl/component/state/exec/execute_state.py",
+                "start_line": 130,
+                "end_line": 140
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "src/moto/stepfunctions/parser/asl/component/state/exec/execute_state.py",
+                "start_line": 100,
+                "end_line": 150
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "src/moto/stepfunctions/parsers/asl/component/state/exec/execute_state.py",
+                "start_line": 100,
+                "end_line": 150
+              }
+            },
+            {
+              "kind": "read_file",
+              "arguments": {
+                "path": "src/moto/stepfunctions/parser/asl/component/state/exec/execute_state.py",
+                "start_line": 100,
+                "end_line": 150
+              }
+            },
+            {
+              "kind": "search_text",
+              "arguments": {
+                "query": "StateTaskServiceAwsSdk"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "p2_training": {
+    "path": "/root/autodl-tmp/sft60-protocol-v2-full18-12step-seed123201",
+    "dataset_sha256": "c90ba181e77b6950e005eb4131c3f8a33901a37aa3a1aecba969532795aa5b96",
+    "optimizer_steps": 12,
+    "elapsed_seconds": 149.147,
+    "peak_cuda_memory_bytes": 21976684544,
+    "train_loss": 0.4169516774515311,
+    "final_grad_norm": 0.5464564561843872,
+    "adapter_weights_changed": true,
+    "target_score_curve": {
+      "step_4": {
+        "adapter_weights_sha256": "23ec84830028b5c436e363726b534c0d9af22171d73f2470ffb6e8659a0ee48a",
+        "example_count": 18,
+        "mean_nll": 0.3628363178835975,
+        "mean_token_accuracy": 0.9000448948807187,
+        "by_action_group": {
+          "edit_or_repair": {
+            "count": 7,
+            "mean_nll": 0.44294032880238127,
+            "mean_token_accuracy": 0.8907631380217416
+          },
+          "navigate_or_read": {
+            "count": 8,
+            "mean_nll": 0.3244479652494192,
+            "mean_token_accuracy": 0.9019332602620125
+          },
+          "verify": {
+            "count": 3,
+            "mean_nll": 0.27829589943091076,
+            "mean_token_accuracy": 0.9166666865348816
+          }
+        },
+        "peak_cuda_memory_bytes": 16449400832,
+        "elapsed_seconds": 16.366
+      },
+      "step_8": {
+        "adapter_weights_sha256": "7e3ed4cd7b82f24cb4d396ae1a515e9c5d2c4d1492e929e84aac52f6163a5374",
+        "example_count": 18,
+        "mean_nll": 0.3045915209998687,
+        "mean_token_accuracy": 0.9204187923007541,
+        "by_action_group": {
+          "edit_or_repair": {
+            "count": 7,
+            "mean_nll": 0.4075945722205298,
+            "mean_token_accuracy": 0.8987649508884975
+          },
+          "navigate_or_read": {
+            "count": 8,
+            "mean_nll": 0.27746783290058374,
+            "mean_token_accuracy": 0.9199396148324013
+          },
+          "verify": {
+            "count": 3,
+            "mean_nll": 0.136580903083086,
+            "mean_token_accuracy": 0.9722222288449606
+          }
+        },
+        "peak_cuda_memory_bytes": 16449400832,
+        "elapsed_seconds": 17.002
+      },
+      "step_12": {
+        "adapter_weights_sha256": "9370e928903c5b59096a7add0bd04c55908574b9ee85ab155678eedfb6d376db",
+        "example_count": 18,
+        "mean_nll": 0.29059604617456597,
+        "mean_token_accuracy": 0.9245392481486002,
+        "by_action_group": {
+          "edit_or_repair": {
+            "count": 7,
+            "mean_nll": 0.3970055856875011,
+            "mean_token_accuracy": 0.9027913979121617
+          },
+          "navigate_or_read": {
+            "count": 8,
+            "mean_nll": 0.2661566101014614,
+            "mean_token_accuracy": 0.9256874993443489
+          },
+          "verify": {
+            "count": 3,
+            "mean_nll": 0.10747895017266273,
+            "mean_token_accuracy": 0.9722222288449606
+          }
+        },
+        "peak_cuda_memory_bytes": 16449400832,
+        "elapsed_seconds": 16.252
+      }
+    }
+  },
+  "p2_training_state_gate": {
+    "summary": {
+      "trial_count": 3,
+      "strict_successes": 0,
+      "mean_shaped_reward": 0.01,
+      "patches_created": 2,
+      "valid_patches": 1,
+      "verified_patches": 2,
+      "trials_resolving_failures": 0,
+      "trials_with_unknown_final_failure_count": 0,
+      "trials_with_new_failures": 1,
+      "trials_with_violations": 0
+    },
+    "adapter_unchanged": true,
+    "optimizer_steps": 0,
+    "peak_cuda_memory_bytes": 22760109056,
+    "states": [
+      {
+        "state_id": "902159f7f97c4e0d977400a1304d8576",
+        "used_for_training": true,
+        "reward": 0.03,
+        "reward_components": {
+          "baseline_failure_count": 1,
+          "final_failure_count": 1,
+          "new_failure_count": 0,
+          "patch_created": true,
+          "patch_valid": true,
+          "resolved_failure_count": 0,
+          "reward_version": "conservative-v2",
+          "strict_reward": 0.0,
+          "strict_success": false,
+          "training_reward": 0.03,
+          "verifier_run_after_patch": true,
+          "violations": []
+        },
+        "actions": [
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "StateTaskServiceAwsSdk"
+            }
+          },
+          {
+            "kind": "read_file",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+            }
+          },
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "FailureEventException"
+            }
+          },
+          {
+            "kind": "read_file",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+              "start_line": 67,
+              "end_line": 135
+            }
+          },
+          {
+            "kind": "replace_text",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+              "old": "            )\n            error: str = self._normalise_exception_name(norm_service_name, ex)\n\n            error_message: str = ex.response[\"Error\"][\"Message\"]\n            cause_details = [\n                f\"Service: {norm_service_name}\",\n                f\"Status Code: {ex.response[\"ResponseMetadata\"][\"HTTPStatusCode\"]}\",\n                f\"Request ID: {ex.response[\"ResponseMetadata\"][\"RequestId\"]}\",\n            ]\n            if \"HostId\" in ex.response[\"ResponseMetadata\"]:\n                cause_details.append(\n                    f'Extended Request ID: {ex.response[\"ResponseMetadata\"][\"HostId\"]}'\n                )\n\n            cause: str = f\"{error_message} ({', '.join(cause_details)})\"\n            failure_event = self._get_task_failure_event(error=error, cause=cause)\n            return failure_event\n        return super()._from_error(env=env, ex=ex)\n\n    def _eval_service_task(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ):\n        service_name = self._get_boto_service_name()\n        api_action = self._get_boto_service_action()\n        api_client = boto_client_for(\n            region=resource_runtime_part.region,\n            account=resource_runtime_part.account,\n            service=service_name,\n        )\n        response = getattr(api_client, api_action)(**normalised_parameters) or dict()\n\n        env.stack.append(response)\n",
+              "new": "            )\n            error: str = self._normalise_exception_name(norm_service_name, ex)\n\n            error_message: str = ex.response[\"Error\"][\"Message\"]\n            cause_details = [\n                f\"Service: {norm_service_name}\",\n                f\"Status Code: {ex.response[\"ResponseMetadata\"][\"HTTPStatusCode\"]}\",\n                f\"Request ID: {ex.response[\"ResponseMetadata\"][\"RequestId\"]}\",\n            ]\n            if \"HostId\" in ex.response[\"ResponseMetadata\"]:\n                cause_details.append(\n                    f'Extended Request ID: {ex.response[\"ResponseMetadata\"][\"HostId\"]}'\n                )\n\n            cause: str = f\"{error_message} ({', '.join(cause_details)})\"\n            failure_event = self._get_task_failure_event(error=error, cause=cause)\n            return failure_event\n        return super()._from_error(env=env, ex=ex)\n\n    def _eval_service_task(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ):\n        service_name = self._get_boto_service_name()\n        api_action = self._get_boto_service_action()\n        api_client = boto_client_for(\n            region=resource_runtime_part.region,\n            account=resource_runtime_part.account,\n            service=service_name,\n        )\n        response = getattr(api_client, api_action)(**normalised_parameters) or dict()\n\n        env.stack.append(response)\n"
+            }
+          },
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+            }
+          },
+          {
+            "kind": "read_file",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+              "start_line": 67,
+              "end_line": 135
+            }
+          },
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+            }
+          },
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_callback.py"
+            }
+          },
+          {
+            "kind": "read_file",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_callback.py",
+              "start_line": 67,
+              "end_line": 135
+            }
+          },
+          {
+            "kind": "replace_text",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_callback.py",
+              "old": "            heartbeat_seconds = env.stack.pop()\n            heartbeat_endpoint: HeartbeatEndpoint = (\n                callback_endpoint.setup_heartbeat_endpoint(\n                    heartbeat_seconds=heartbeat_seconds\n                )\n            )\n\n            outcome = None\n            while (\n                env.is_running() and outcome is None\n            ):  # Until subprocess hasn't timed out or result wasn't received.\n                received = heartbeat_endpoint.clear_and_wait()\n                if not received and env.is_running():  # Heartbeat timed out.\n                    raise HeartbeatTimeoutError()\n                outcome = callback_endpoint.get_outcome()\n\n        if outcome is None:\n            raise CallbackTimeoutError()\n        if isinstance(outcome, CallbackOutcomeSuccess):\n            outcome_output = json.loads(outcome.output)\n            env.stack.append(outcome_output)\n        elif isinstance(outcome, CallbackOutcomeFailure):\n            raise CallbackOutcomeFailureError(callback_outcome_failure=outcome)\n        else:\n            raise NotImplementedError(\n                f\"Unsupported CallbackOutcome type '{type(outcome)}'.\"\n            )\n\n    def _sync(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ) -> None:\n        raise RuntimeError(\n            f\"Unsupported .sync callback procedure in resource {self.resource.resource_arn}\"\n        )\n\n    def _sync2(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ) -> None:\n        raise RuntimeError(\n            f\"Unsupported .sync:2 callback procedure in resource {self.resource.resource_arn}\"\n        )\n\n    def _is_condition(self):\n        return self.resource.condition is not None\n\n    def _get_callback_outcome_failure_event(\n        self, ex: CallbackOutcomeFailureError\n    ) -> FailureEvent:\n        callback_outcome_failure: CallbackOutcomeFailure = ex.callback_outcome_failure\n        error: str = callback_outcome_failure.error\n        return FailureEvent(\n            error_name=CustomErrorName(error_name=callback_outcome_failure.error),\n            event_type=HistoryEventType.TaskFailed,\n            event_details=EventDetails(\n                taskFailedEventDetails=TaskFailedEventDetails(\n                    resourceType=self._get_sfn_resource_type(),\n                    resource=self._get_sfn_resource(),\n                    error=error,\n                    cause=callback_outcome_failure.cause,\n                )\n            ),\n        )\n\n",
+              "new": "            heartbeat_seconds = env.stack.pop()\n            heartbeat_endpoint: HeartbeatEndpoint = (\n                callback_endpoint.setup_heartbeat_endpoint(\n                    heartbeat_seconds=heartbeat_seconds\n                )\n            )\n\n            outcome = None\n            while (\n                env.is_running() and outcome is None\n            ):  # Until subprocess hasn't timed out or result wasn't received.\n                received = heartbeat_endpoint.clear_and_wait()\n                if not received and env.is_running():  # Heartbeat timed out.\n                    raise HeartbeatTimeoutError()\n                outcome = callback_endpoint.get_outcome()\n\n        if outcome is None:\n            raise CallbackTimeoutError()\n        if isinstance(outcome, CallbackOutcomeSuccess):\n            outcome_output = json.loads(outcome.output)\n            env.stack.append(outcome_output)\n        elif isinstance(outcome, CallbackOutcomeFailure):\n            raise CallbackOutcomeFailureError(callback_outcome_failure=outcome)\n        else:\n            raise NotImplementedError(\n                f\"Unsupported CallbackOutcome type '{type(outcome)}'.\"\n            )\n\n    def _sync(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ) -> None:\n        raise RuntimeError(\n            f\"Unsupported .sync callback procedure in resource {self.resource.resource_arn}\"\n        )\n\n    def _sync2(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ) -> None:\n        raise RuntimeError(\n            f\"Unsupported .sync:2 callback procedure in resource {self.resource.resource_arn}\"\n        )\n\n    def _is_condition(self):\n        return self.resource.condition is not None\n\n    def _get_callback_outcome_failure_event(\n        self, ex: CallbackOutcomeFailureError\n    ) -> FailureEvent:\n        callback_outcome_failure: CallbackOutcomeFailure = ex.callback_outcome_failure\n        error: str = callback_outcome_failure.error\n        return FailureEvent(\n            error_name=CustomErrorName(error_name=callback_outcome_failure.error),\n            event_type=HistoryEventType.TaskFailed,\n            event_details=EventDetails(\n                taskFailedEventDetails=TaskFailedEventDetails(\n                    resourceType=self._get_sfn_resource_type(),\n                    resource=self._get_sfn_resource(),\n                    error=error,\n                    cause=callback_outcome_failure.cause,\n                )\n            ),\n        )\n\n"
+            }
+          },
+          {
+            "kind": "run_tests",
+            "arguments": {}
+          }
+        ]
+      },
+      {
+        "state_id": "468f8f521e6c4694b36ff2fb6c828f13",
+        "used_for_training": true,
+        "reward": 0.0,
+        "reward_components": {
+          "baseline_failure_count": 1,
+          "final_failure_count": 1,
+          "new_failure_count": 0,
+          "patch_created": false,
+          "patch_valid": false,
+          "resolved_failure_count": 0,
+          "reward_version": "conservative-v2",
+          "strict_reward": 0.0,
+          "strict_success": false,
+          "training_reward": 0.0,
+          "verifier_run_after_patch": false,
+          "violations": []
+        },
+        "actions": [
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "StateTaskServiceAwsSdk"
+            }
+          },
+          {
+            "kind": "read_file",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+              "start_line": 25,
+              "end_line": 38
+            }
+          },
+          {
+            "kind": "read_file",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+              "start_line": 10,
+              "end_line": 54
+            }
+          },
+          {
+            "kind": "read_file",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_callback.py"
+            }
+          },
+          {
+            "kind": "replace_text",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_callback.py",
+              "old": "import abc\nimport json\n\nfrom moto.stepfunctions.parser.api import (\n    HistoryEventExecutionDataDetails,\n    HistoryEventType,\n    TaskFailedEventDetails,\n    TaskSubmittedEventDetails,\n)\nfrom moto.stepfunctions.parser.asl.component.common.error_name.custom_error_name import (\n    CustomErrorName,\n)\nfrom moto.stepfunctions.parser.asl.component.common.error_name.failure_event import (\n    FailureEvent,\n)\nfrom moto.stepfunctions.parser.asl.component.state.exec.state_task.service.resource import (\n    ResourceCondition,\n    ResourceRuntimePart,\n)\nfrom moto.stepfunctions.parser.asl.component.state.exec.state_task.service.state_task_service import (\n    StateTaskService,\n)\nfrom moto.stepfunctions.parser.asl.eval.callback.callback import (\n    CallbackOutcomeFailure,\n    CallbackOutcomeFailureError,\n    CallbackOutcomeSuccess,\n    CallbackTimeoutError,\n    HeartbeatEndpoint,\n    HeartbeatTimeoutError,\n)\nfrom moto.stepfunctions.parser.asl.eval.environment import Environment\nfrom moto.stepfunctions.parser.asl.eval.event.event_detail import EventDetails\nfrom moto.stepfunctions.parser.asl.utils.encoding import to_json_str\n\n\n\nclass StateTaskServiceCallback(StateTaskService, abc.ABC):\n    def _get_sfn_resource(self) -> str:\n        resource = super()._get_sfn_resource()\n        if self.resource.condition is not None:\n            resource += f\".{self.resource.condition}\"\n        return resource\n\n    def _wait_for_task_token(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ) -> None:\n        # Discard the state evaluation output.\n        env.stack.pop()\n\n        callback_id = env.context_object_manager.context_object[\"Task\"][\"Token\"]\n        callback_endpoint = env.callback_pool_manager.get(callback_id)\n\n        # With Timeouts-only definition:\n        if not self.heartbeat:\n            self.timeout.eval(env=env)\n            timeout_seconds = env.stack.pop()\n            # Although the timeout is handled already be the superclass (ExecutionState),\n            # the timeout value is specified here too, to allow this child process to terminate earlier even if\n            # discarded by the main process.\n            # Note: although this is the same timeout value, this can only decay strictly after the first timeout\n            #       started as it is invoked strictly later.\n            outcome = callback_endpoint.wait(timeout=timeout_seconds)\n        else:\n            self.heartbeat.eval(env=env)\n            heartbeat_seconds = env.stack.pop()\n            heartbeat_endpoint: HeartbeatEndpoint = (\n                callback_endpoint.setup_heartbeat_endpoint(\n                    heartbeat_seconds=heartbeat_seconds\n                )\n            )\n\n            outcome = None\n            while (\n                env.is_running() and outcome is None\n            ):  # Until subprocess hasn't timed out or result wasn't received.\n                received = heartbeat_endpoint.clear_and_wait()\n                if not received and env.is_running():  # Heartbeat timed out.\n                    raise HeartbeatTimeoutError()\n                outcome = callback_endpoint.get_outcome()\n\n        if outcome is None:\n            raise CallbackTimeoutError()\n        if isinstance(outcome, CallbackOutcomeSuccess):\n            outcome_output = json.loads(outcome.output)\n            env.stack.append(outcome_output)\n        elif isinstance(outcome, CallbackOutcomeFailure):\n            raise CallbackOutcomeFailureError(callback_outcome_failure=outcome)\n        else:\n            raise NotImplementedError(\n                f\"Unsupported CallbackOutcome type '{type(outcome)}'.\"\n            )\n\n    def _sync(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ) -> None:\n        raise RuntimeError(\n            f\"Unsupported .sync callback procedure in resource {self.resource.resource_arn}\"\n        )\n\n    def _sync2(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ) -> None:\n        raise RuntimeError(\n            f\"Unsupported .sync:2 callback procedure in resource {self.resource.resource_arn}\"\n        )\n\n    def _is_condition(self):\n        return self.resource.condition is not None\n\n    def _get_callback_outcome_failure_event(\n        self, ex: CallbackOutcomeFailureError\n    ) -> FailureEvent:\n        callback_outcome_failure: CallbackOutcomeFailure = ex.callback_outcome_failure\n        error: str = callback_outcome_failure.error\n        return FailureEvent(\n            error_name=CustomErrorName(error_name=callback_outcome_failure.error),\n            event_type=HistoryEventType.TaskFailed,\n            event_details=EventDetails(\n                taskFailedEventDetails=TaskFailedEventDetails(\n                    resourceType=self._get_sfn_resource_type(),\n                    resource=self._get_sfn_resource(),\n                    error=error,\n                    cause=callback_outcome_failure.cause,\n                )\n            ),\n        )\n\n    def _from_error(self, env: Environment, ex: Exception) -> FailureEvent:\n        if isinstance(ex, CallbackOutcomeFailureError):\n            return self._get_callback_outcome_failure_event(ex=ex)\n        return super()._from_error(env=env, ex=ex)\n\n    def _after_eval_execution(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ) -> None:\n        if self._is_condition():\n            output = env.stack[-1]\n            env.event_history.add_event(\n                context=env.event_history_context,\n                hist_type_event=HistoryEventType.TaskSubmitted,\n                event_detail=EventDetails(\n                    taskSubmittedEventDetails=TaskSubmittedEventDetails(\n                        resource=self._get_sfn_resource(),\n                        resourceType=self._get_sfn_resource_type(),\n                        output=to_json_str(output),\n                        outputDetails=HistoryEventExecutionDataDetails(truncated=False),\n                    )\n                ),\n            )\n            if self.resource.condition == ResourceCondition.WaitForTaskToken:\n                self._wait_for_task_token(\n                    env=env,\n                    resource_runtime_part=resource_runtime_part,\n                    normalised_parameters=normalised_parameters,\n                )\n            elif self.resource.condition == ResourceCondition.Sync:\n                self._sync(\n                    env=env,\n                    resource_runtime_part=resource_runtime_part,\n                    normalised_parameters=normalised_parameters,\n                )\n            elif self.resource.condition == ResourceCondition.Sync2:\n                self._sync2(\n                    env=env,\n                    resource_runtime_part=resource_runtime_part,\n                    normalised_parameters=normalised_parameters,\n                )\n            else:\n                raise NotImplementedError(\n                    f\"Unsupported callback type '{self.resource.condition}'.\"\n                )\n\n        super()._after_eval_execution(\n            env=env,\n            resource_runtime_part=resource_runtime_part,\n            normalised_parameters=normalised_parameters,\n        )\n\n",
+              "new": "import abc\nimport json\n\nfrom moto.stepfunctions.parser.api import (\n    HistoryEventExecutionDataDetails,\n    HistoryEventType,\n    TaskFailedEventDetails,\n    TaskSubmittedEventDetails,\n)\nfrom moto.stepfunctions.parser.asl.component.common.error_name.custom_error_name import (\n    CustomErrorName,\n)\nfrom moto.stepfunctions.parser.asl.component.common.error_name.failure_event import (\n    FailureEvent,\n)\nfrom moto.stepfunctions.parser.asl.component.state.exec.state_task.service.resource import (\n    ResourceCondition,\n    ResourceRuntimePart,\n)\nfrom moto.stepfunctions.parser.asl.component.state.exec.state_task.service.state_task_service import (\n    StateTaskService,\n)\nfrom moto.stepfunctions.parser.asl.eval.callback.callback import (\n    CallbackOutcomeFailure,\n    CallbackOutcomeFailureError,\n    CallbackOutcomeSuccess,\n    CallbackTimeoutError,\n    HeartbeatEndpoint,\n    HeartbeatTimeoutError,\n)\nfrom moto.stepfunctions.parser.asl.eval.environment import Environment\nfrom moto.stepfunctions.parser.asl.eval.event.event_detail import EventDetails\nfrom moto.stepfunctions.parser.asl.utils.encoding import to_json_str\n\n\n\nclass StateTaskServiceCallback(StateTaskService, abc.ABC):\n    def _get_sfn_resource(self) -> str:\n        resource = super()._get_sfn_resource()\n        if self.resource.condition is not None:\n            resource += f\".{self.resource.condition}\"\n        return resource\n\n    def _wait_for_task_token(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ) -> None:\n        # Discard the state evaluation output.\n        env.stack.pop()\n\n        callback_id = env.context_object_manager.context_object[\"Task\"][\"Token\"]\n        callback_endpoint = env.callback_pool_manager.get(callback_id)\n\n        # With Timeouts-only definition:\n        if not self.heartbeat:\n            self.timeout.eval(env=env)\n            timeout_seconds = env.stack.pop()\n            # Although the timeout is handled already be the superclass (ExecutionState),\n            # the timeout value is specified here too, to allow this child process to terminate earlier even if\n            # discarded by the main process.\n            # Note: although this is the same timeout value, this can only decay strictly after the first timeout\n            #       started as it is invoked strictly later.\n            outcome = callback_endpoint.wait(timeout=timeout_seconds)\n        else:\n            self.heartbeat.eval(env=env)\n            heartbeat_seconds = env.stack.pop()\n            heartbeat_endpoint: HeartbeatEndpoint = (\n                callback_endpoint.setup_heartbeat_endpoint(\n                    heartbeat_seconds=heartbeat_seconds\n                )\n            )\n\n            outcome = None\n            while (\n                env.is_running() and outcome is None\n            ):  # Until subprocess hasn't timed out or result wasn't received.\n                received = heartbeat_endpoint.clear_and_wait()\n                if not received and env.is_running():  # Heartbeat timed out.\n                    raise HeartbeatTimeoutError()\n                outcome = callback_endpoint.get_outcome()\n\n        if outcome is None:\n            raise CallbackTimeoutError()\n        if isinstance(outcome, CallbackOutcomeSuccess):\n            outcome_output = json.loads(outcome.output)\n            env.stack.append(outcome_output)\n        elif isinstance(outcome, CallbackOutcomeFailure):\n            raise CallbackOutcomeFailureError(callback_outcome_failure=outcome)\n        else:\n            raise NotImplementedError(\n                f\"Unsupported CallbackOutcome type '{type(outcome)}'.\"\n            )\n\n    def _sync(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ) -> None:\n        raise RuntimeError(\n            f\"Unsupported .sync callback procedure in resource {self.resource.resource_arn}\"\n        )\n\n    def _sync2(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ) -> None:\n        raise RuntimeError(\n            f\"Unsupported .sync:2 callback procedure in resource {self.resource.resource_arn}\"\n        )\n\n    def _is_condition(self):\n        return self.resource.condition is not None\n\n    def _get_callback_outcome_failure_event(\n        self, ex: CallbackOutcomeFailureError\n    ) -> FailureEvent:\n        callback_outcome_failure: CallbackOutcomeFailure = ex.callback_outcome_failure\n        error: str = callback_outcome_failure.error\n        return FailureEvent(\n            error_name=CustomErrorName(error_name=callback_outcome_failure.error),\n            event_type=HistoryEventType.TaskFailed,\n            event_details=EventDetails(\n                taskFailedEventDetails=TaskFailedEventDetails(\n                    resourceType=self._get_sfn_resource_type(),\n                    resource=self._get_sfn_resource(),\n                    error=error,\n                    cause=callback_outcome_failure.cause,\n                )\n            ),\n        )\n\n    def _from_error(self, env: Environment, ex: Exception) -> FailureEvent:\n        if isinstance(ex, CallbackOutcomeFailureError):\n            return self._get_callback_outcome_failure_event(ex=ex)\n        return super()._from_error(env=env, ex=ex)\n\n    def _after_eval_execution(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ) -> None:\n        if self._is_condition():\n            output = env.stack[-1]\n            env.event_history.add_event(\n                context=env.event_history_context,\n                hist_type_event=HistoryEventType.TaskSubmitted,\n                event_detail=EventDetails(\n                    taskSubmittedEventDetails=TaskSubmittedEventDetails(\n                        resource=self._get_sfn_resource(),\n                        resourceType=self._get_sfn_resource_type(),\n                        output=to_json_str(output),\n                        outputDetails=HistoryEventExecutionDataDetails(truncated=False),\n                    )\n                ),\n            )\n            if self.resource.condition == ResourceCondition.WaitForTaskToken:\n                self._wait_for_task_token(\n                    env=env,\n                    resource_runtime_part=resource_runtime_part,\n                    normalised_parameters=normalised_parameters,\n                )\n            elif self.resource.condition == ResourceCondition.Sync:\n                self._sync(\n                    env=env,\n                    resource_runtime_part=resource_runtime_part,\n                    normalised_parameters=normalised_parameters,\n                )\n            elif self.resource.condition == ResourceCondition.Sync2:\n                self._sync2(\n                    env=env,\n                    resource_runtime_part=resource_runtime_part,\n                    normalised_parameters=normalised_parameters,\n                )\n            else:\n                raise NotImplementedError(\n                    f\"Unsupported callback type '{self.resource.condition}'.\"\n                )\n\n        super()._after_eval_execution(\n            env=env,\n            resource_runtime_part=resource_runtime_part,\n            normalised_parameters=normalised_parameters,\n        )\n\n"
+            }
+          },
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "StateTaskServiceAwsSdk"
+            }
+          },
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+            }
+          },
+          {
+            "kind": "read_file",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+              "start_line": 1,
+              "end_line": 38
+            }
+          }
+        ]
+      },
+      {
+        "state_id": "8ac920f9551c4f61a6bbf5ab56fa65f3",
+        "used_for_training": true,
+        "reward": 0.0,
+        "reward_components": {
+          "baseline_failure_count": 1,
+          "final_failure_count": 3,
+          "new_failure_count": 2,
+          "patch_created": true,
+          "patch_valid": false,
+          "resolved_failure_count": 0,
+          "reward_version": "conservative-v2",
+          "strict_reward": 0.0,
+          "strict_success": false,
+          "training_reward": 0.0,
+          "verifier_run_after_patch": true,
+          "violations": []
+        },
+        "actions": [
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "StateTaskServiceAwsSdk"
+            }
+          },
+          {
+            "kind": "read_file",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+            }
+          },
+          {
+            "kind": "read_file",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_callback.py"
+            }
+          },
+          {
+            "kind": "replace_lines",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+              "start_line": 52,
+              "end_line": 52,
+              "new": "        api_client = boto_client_for(\n            region=resource_runtime_part.region,\n            account=resource_runtime_part.account,\n            service=service_name,\n        )\n        response = getattr(api_client, api_action)(**normalised_parameters) or dict()\n\n        # Debugging line added for understanding parameters\n        print('Parameters sent to API:', normalised_parameters)\n\n        env.stack.append(response)\n"
+            }
+          },
+          {
+            "kind": "run_tests",
+            "arguments": {}
+          },
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+            }
+          },
+          {
+            "kind": "read_file",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+              "start_line": 42,
+              "end_line": 62
+            }
+          },
+          {
+            "kind": "replace_lines",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py",
+              "start_line": 42,
+              "end_line": 62,
+              "new": "    def _normalise_exception_name(norm_service_name: str, ex: Exception) -> str:\n        ex_name = ex.__class__.__name__\n        norm_ex_name = f\"{norm_service_name}.{norm_service_name if ex_name == 'ClientError' else ex_name}\"\n        if not norm_ex_name.endswith(\"Exception\"):\n            norm_ex_name += \"Exception\"\n        return norm_ex_name\n\n    def _get_task_failure_event(self, error: str, cause: str) -> FailureEvent:\n        return FailureEvent(\n            error_name=StatesErrorName(typ=StatesErrorNameType.StatesTaskFailed),\n            event_type=HistoryEventType.TaskFailed,\n            event_details=EventDetails(\n                taskFailedEventDetails=TaskFailedEventDetails(\n                    resource=self._get_sfn_resource(),\n                    resourceType=self._get_sfn_resource_type(),\n                    error=error,\n                    cause=cause,\n                )\n            ),\n        )\n\n    def _eval_service_task(\n        self,\n        env: Environment,\n        resource_runtime_part: ResourceRuntimePart,\n        normalised_parameters: dict,\n    ) -> None:\n        service_name = self._get_boto_service_name()\n        api_action = self._get_boto_service_action()\n        api_client = boto_client_for(\n            region=resource_runtime_part.region,\n            account=resource_runtime_part.account,\n            service=service_name,\n        )\n        response = getattr(api_client, api_action)(**normalised_parameters) or dict()\n\n        # Debugging line added for understanding parameters\n        print('Parameters sent to API:', normalised_parameters)\n\n        env.stack.append(response)\n"
+            }
+          },
+          {
+            "kind": "run_tests",
+            "arguments": {}
+          },
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+            }
+          },
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "moto/stepfunctions/parser/asl/component/state/exec/state_task/state_task_factory.py"
+            }
+          },
+          {
+            "kind": "read_file",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/state_task_factory.py",
+              "start_line": 4,
+              "end_line": 24
+            }
+          },
+          {
+            "kind": "replace_lines",
+            "arguments": {
+              "path": "moto/stepfunctions/parser/asl/component/state/exec/state_task/state_task_factory.py",
+              "start_line": 4,
+              "end_line": 24,
+              "new": "    ServiceResource,\n)\nfrom moto.stepfunctions.parser.asl.component.state.exec.state_task.service.state_task_service_factory import (\n    state_task_service_for,\n)\nfrom moto.stepfunctions.parser.asl.component.state.exec.state_task.state_task import (\n    StateTask,\n)\nfrom moto.stepfunctions.parser.asl.component.state.exec.state_task.state_task_lambda import (\n    StateTaskLambda,\n)\n\n\ndef state_task_for(resource: Resource) -> StateTask:\n    if not resource:\n        raise ValueError(\"No Resource declaration in State Task.\")\n    if isinstance(resource, LambdaResource):\n        state = StateTaskLambda()\n    elif isinstance(resource, ServiceResource):\n        state = state_task_service_for(service_name=resource.service_name)\n    else:\n"
+            }
+          },
+          {
+            "kind": "run_tests",
+            "arguments": {}
+          },
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+            }
+          },
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "moto/stepfunctions/parser/asl/component/state/exec/state_task/state_task_service_aws_sdk.py"
+            }
+          },
+          {
+            "kind": "search_text",
+            "arguments": {
+              "query": "moto/stepfunctions/parser/asl/component/state/exec/state_task/service/state_task_service_aws_sdk.py"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "adapters": {
+    "A_7b_sft60": {
+      "path": "/root/autodl-tmp/sft-grpo-dynamic-v2-60step-seed73001/final-adapter",
+      "weights_sha256": "55c947e02b404c3d150e3a2eabd4f55dd50c34641d8d68495f7fbb00c573081c",
+      "config_sha256": "e5a1f987027af4d8b7777d5473f8ff085338de6ea7b4d294d7d834fe23a717d0"
+    },
+    "B_7b_semantic_old": {
+      "path": "/root/autodl-tmp/sft60-semantic-recovery-seed122001/final-adapter",
+      "weights_sha256": "312c607bc73643182d2fbdffe216875ab5b306d5dadfe1c91ec1f458072cdfc6",
+      "config_sha256": "b3d6ce588ef51fa32757abf4b93799f2a1c7da56b835986dc202237559cbe0ad"
+    },
+    "C_14b_parent_path": {
+      "path": "/root/autodl-tmp/sft-parent-path-14b-2step-seed115001/final-adapter",
+      "weights_sha256": "e3301338886598a9d5e6c9c683502c49204b7692ece77ae30916950da380d5d2",
+      "config_sha256": "1f627134807ba144c7716a8340de660c487ca9efcc6fb95d136cb70ec7a60450"
+    },
+    "P2_step_4": {
+      "path": "/root/autodl-tmp/sft60-protocol-v2-full18-12step-seed123201/checkpoint-4",
+      "weights_sha256": "23ec84830028b5c436e363726b534c0d9af22171d73f2470ffb6e8659a0ee48a",
+      "config_sha256": "8a0643cf0a943c655a1f6f4ad4a5b101fcfaf9c95d06443798def0c8156a1af4"
+    },
+    "P2_step_8": {
+      "path": "/root/autodl-tmp/sft60-protocol-v2-full18-12step-seed123201/checkpoint-8",
+      "weights_sha256": "7e3ed4cd7b82f24cb4d396ae1a515e9c5d2c4d1492e929e84aac52f6163a5374",
+      "config_sha256": "8a0643cf0a943c655a1f6f4ad4a5b101fcfaf9c95d06443798def0c8156a1af4"
+    },
+    "P2_step_12": {
+      "path": "/root/autodl-tmp/sft60-protocol-v2-full18-12step-seed123201/checkpoint-12",
+      "weights_sha256": "9370e928903c5b59096a7add0bd04c55908574b9ee85ab155678eedfb6d376db",
+      "config_sha256": "8a0643cf0a943c655a1f6f4ad4a5b101fcfaf9c95d06443798def0c8156a1af4"
+    },
+    "P2_final": {
+      "path": "/root/autodl-tmp/sft60-protocol-v2-full18-12step-seed123201/final-adapter",
+      "weights_sha256": "9370e928903c5b59096a7add0bd04c55908574b9ee85ab155678eedfb6d376db",
+      "config_sha256": "8a0643cf0a943c655a1f6f4ad4a5b101fcfaf9c95d06443798def0c8156a1af4"
+    }
+  },
+  "decision": {
+    "selected_branch": "P2 single 7B learnability diagnostic after P1 branch III",
+    "p2_required": "3/3 strict success and no new failures",
+    "p2_passed": false,
+    "reason": "0/3 strict success and 0/3 failure reduction; one trial introduced new failures",
+    "p3_started": false,
+    "additional_sft_started": false,
+    "grpo_started": false,
+    "stop_is_pre_registered": true
+  },
+  "dependency_note": {
+    "observed_system_peft": "0.17.1 incompatible with Transformers 5.16.1",
+    "training_overlay": "/root/autodl-tmp/peft-0.21.0-overlay",
+    "training_overlay_version": "0.21.0",
+    "existing_environment_overwritten": false
+  }
+}

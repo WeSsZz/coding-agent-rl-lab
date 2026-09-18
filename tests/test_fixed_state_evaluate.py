@@ -54,8 +54,17 @@ class FixedStateEvaluateTests(unittest.TestCase):
 
     def test_verifier_status_ignores_runtime_noise(self) -> None:
         first = "Tests failed (exit=1).\nFAILED tests/x.py::test_a\n"
-        second = "Tests failed (exit=1).\nslow timing\nFAILED tests/x.py::test_a\n"
+        second = (
+            "Tests failed (exit=1).\n"
+            "ERROR moto.module:45 runtime log\n"
+            "FAILED tests/x.py::test_a\n"
+        )
         self.assertEqual(_test_status(first), _test_status(second))
+
+    def test_verifier_status_preserves_pass_fail_identity(self) -> None:
+        failed = "Tests failed (exit=1).\nFAILED tests/x.py::test_a\n"
+        passed = "Tests failed (exit=1).\nPASSED tests/x.py::test_a\n"
+        self.assertNotEqual(_test_status(failed), _test_status(passed))
 
 
 if __name__ == "__main__":

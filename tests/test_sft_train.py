@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from coding_agent_rl_lab.model_policy import PROMPT_VERSION
 from coding_agent_rl_lab.sft_train import (
@@ -105,6 +106,38 @@ class SFTTrainTests(unittest.TestCase):
             with self.assertRaisesRegex(SFTTrainingError, "contains_answers=true"):
                 load_sft_examples(dataset, report)
 
+    def test_grpo_rows_use_rollout_tools_and_structured_history(self) -> None:
+        example = _example()
+        example["action_protocol"] = "grpo-bare-json"
+        example["messages"] = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task"},
+            {
+                "role": "assistant",
+                "content": '{"name":"search_text","arguments":{"query":"symbol"}}',
+            },
+            {"role": "tool", "name": "search_text", "content": "match"},
+            {
+                "role": "assistant",
+                "content": '{"name":"run_tests","arguments":{}}',
+            },
+        ]
+        tool_schemas = [{"type": "function", "function": {"name": "search_text"}}]
+        with patch(
+            "coding_agent_rl_lab.sft_train._grpo_tool_schemas", return_value=tool_schemas
+        ):
+            row = prepare_prompt_completion_rows([example])[0]
+
+        self.assertEqual(row["tools"], tool_schemas)
+        self.assertNotIn("content", row["prompt"][2])
+        self.assertEqual(
+            row["prompt"][2]["tool_calls"][0]["function"],
+            {"name": "search_text", "arguments": {"query": "symbol"}},
+        )
+        self.assertEqual(
+            row["completion"][0]["content"], '{"name":"run_tests","arguments":{}}'
+        )
+
     def test_assistant_content_must_match_target_action(self) -> None:
         example = _example()
         example["messages"][-1]["content"] = '{"kind":"finish","arguments":{}}'
@@ -150,9 +183,11 @@ class SFTTrainTests(unittest.TestCase):
 
     def test_token_length_report_refuses_to_hide_overflow(self) -> None:
         class Tokenizer:
-            def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
+            def apply_chat_template(
+                self, messages, *, tokenize, add_generation_prompt, tools=None
+            ):
                 self.assertions = getattr(self, "assertions", []) + [
-                    (tokenize, add_generation_prompt)
+                    (tokenize, add_generation_prompt, tools)
                 ]
                 return "".join(message["content"] for message in messages)
 
@@ -167,7 +202,7 @@ class SFTTrainTests(unittest.TestCase):
         self.assertEqual(report["example_count"], 1)
         self.assertEqual(report["over_max_length_count"], 1)
         self.assertGreater(report["max_full_tokens"], 10)
-        self.assertEqual(tokenizer.assertions, [(False, False), (False, True)])
+        self.assertEqual(tokenizer.assertions, [(False, False, None), (False, True, None)])
         self.assertGreater(report["total_supervised_tokens"], 0)
         self.assertFalse(tokenizer.add_special_tokens)
 
@@ -178,6 +213,7 @@ class SFTTrainTests(unittest.TestCase):
             max_steps=1,
             gradient_accumulation_steps=1,
             learning_rate=1e-4,
+            checkpoint_steps=None,
         )
         with self.assertRaisesRegex(SystemExit, "--max-length"):
             _validate_args(args)

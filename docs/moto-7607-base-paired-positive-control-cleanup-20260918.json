@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-18",
+  "ubuntu_worker_port": 9017,
+  "ubuntu_worker_stopped": true,
+  "reverse_tunnel_stopped": true,
+  "ubuntu_worker_token_removed": true,
+  "autodl_worker_token_removed": true,
+  "ubuntu_running_experiment_containers": 0,
+  "autodl_evaluator_running": false,
+  "autodl_gpu": "NVIDIA vGPU-48GB",
+  "autodl_gpu_total_mib": 49140,
+  "autodl_gpu_used_mib_after_cleanup": 1,
+  "cloud_billing_state_changed": false
+}

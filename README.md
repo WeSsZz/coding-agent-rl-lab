@@ -74,6 +74,17 @@ PYTHONPATH=src python -m coding_agent_rl_lab evaluate \
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
+Windows 上通过不等于通过：权威测试环境是本地 Ubuntu VM，两边都要过。同步并在 VM 上验证：
+
+```powershell
+pwsh -File scripts/sync_and_validate_vm.ps1
+pwsh -File scripts/sync_and_validate_vm.ps1 -DockerIntegration
+```
+
+脚本把 `src`、`tests`、`scripts`、`datasets`、`fixtures` 打包到 VM 上的隔离 `/tmp`
+目录运行，结束后清理本地与远端临时文件。缺 `scripts` 或 `fixtures` 会让测试以 import error
+而不是 failure 的形式失败，所以这些目录必须一起打包。
+
 ## 安全边界
 
 本地环境只用于仓库中人工审核的微型 fixture：
@@ -111,7 +122,7 @@ gold/reference patch 不会进入 policy 可见的 `CodingTask`，该结果不�
 
 模型每一步只能返回一个严格 JSON 动作。Trajectory v3 额外保存初始 verifier observation，并继续保存实际 prompt messages、模型原始输出、采样 seed、延迟、token usage、工具 observation 和协议错误，但不保存 API key。若 vLLM 启用了 API key，在 Ubuntu shell 中通过环境变量提供：
 
-模型首步会直接看到真实的 fail-before verifier 输出，可据此读取精确测试路径；大型仓库的文件清单会明确标记截断，policy 可用受限的 `search_text` 动作按文件名或字面文本检索代码。搜索结果优先排列实现文件，再排列测试和文档；`read_file` 支持 20–400 行的局部范围读取，便于从搜索命中和 traceback 获取可精确替换的上下文。文件不存在、替换文本未匹配等普通工具错误会作为 observation 返回，循环保护器同时报告剩余步骤；相同失败动作、搜索或未变化文件读取不能原样重复。路径越界和修改 verifier-owned 测试等安全错误仍是立即终止的 hard violation。v12 prompt 还为全部历史 observation 设置共享字符预算，优先保留最近观察，要求为修改与复测预留步骤，并在补丁测试失败后优先处理新 traceback。
+模型首步会直接看到真实的 fail-before verifier 输出，可据此读取精确测试路径；大型仓库的文件清单会明确标记截断，policy 可用受限的 `search_text` 动作按文件名或字面文本检索代码。搜索结果优先排列实现文件，再排列测试和文档；`read_file` 支持 20–400 行的局部范围读取，便于从搜索命中和 traceback 获取可精确替换的上下文。文件不存在、替换文本未匹配等普通工具错误会作为 observation 返回，循环保护器同时报告剩余步骤；相同失败动作、搜索或未变化文件读取不能原样重复。路径越界和修改 verifier-owned 测试等安全错误仍是立即终止的 hard violation。v15 prompt 为全部历史 observation 设置共享字符预算，优先保留最近观察，要求为修改与复测预留至少三分之一剩余步骤，并在补丁测试失败后优先处理新 traceback。
 
 ```bash
 export CODING_AGENT_MODEL_API_KEY='<local-or-vllm-token>'
@@ -143,6 +154,11 @@ PYTHONPATH=src python3 -m coding_agent_rl_lab.swe_gym_rollout \
   --test-timeout-seconds 180 \
   --resume
 ```
+
+`--max-steps` 默认 24。把 `--context-window-tokens` 设成 vLLM 实际服务的
+`--max-model-len`（例如 32768）：prompt 预算超限时客户端会在发送请求之前拒绝，并把该 trial
+记为基础设施失败，而不是让它变成一次 HTTP 400 的"策略失败"。小于 8192 的窗口装不下
+system prompt 加一个任务 observation，跑出来的失败率不反映策略能力。
 
 每个 repetition 都在全新的 Docker environment 中执行，并使用不重叠的确定性 seed 区间。结果写入 `work/swe-gym-model-report.json` 和 `work/swe-gym-model-trajectories.jsonl`；report 自动汇总 trial count、成功率、样本方差、`pass^3`、scalar reward 和逐任务可靠性。模型端点不可达或输出违反 JSON 协议时，rollout 仍会落盘，并以 hard violation 计为零 reward。
 

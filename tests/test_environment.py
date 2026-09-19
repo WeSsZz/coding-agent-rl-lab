@@ -34,6 +34,27 @@ def _write_importing_test_repository(repository: Path) -> None:
     )
 
 
+def _write_route_test_repository(repository: Path) -> None:
+    """A repository whose route table spells the searched path only as a pattern."""
+
+    (repository / "tests").mkdir()
+    (repository / "pkg" / "api").mkdir(parents=True)
+    (repository / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (repository / "pkg" / "api" / "__init__.py").write_text("", encoding="utf-8")
+    (repository / "pkg" / "api" / "urls.py").write_text(
+        "url_paths = {\n"
+        '    "{0}/moto-api/$": dashboard,\n'
+        '    "{0}/moto-api/reset": reset,\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    (repository / "tests" / "test_config.py").write_text(
+        "from pkg.api.urls import url_paths\n\n\ndef test_api():\n"
+        '    response = get("/moto-api/config")\n',
+        encoding="utf-8",
+    )
+
+
 class EnvironmentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(__file__).resolve().parents[1]
@@ -169,6 +190,7 @@ class EnvironmentTests(unittest.TestCase):
 
         self.assertIn("found 0", message)
         self.assertIn("numbered read_file output", message)
+        self.assertIn("run search_text with it", message)
 
     def test_search_points_at_the_implementation_when_every_match_is_a_test(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -186,6 +208,26 @@ class EnvironmentTests(unittest.TestCase):
             ],
         )
         self.assertNotIn("IMPLEMENTATION_CANDIDATE", implementation_hit)
+        self.assertNotIn("Shorter query", implementation_hit)
+
+    def test_search_re_queries_the_path_when_only_the_test_spells_it_out(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            _write_route_test_repository(repository)
+
+            rendered = search_repository(repository, "/moto-api/config")
+
+        self.assertEqual(
+            rendered.splitlines(),
+            [
+                'tests/test_config.py:5:    response = get("/moto-api/config")',
+                'No implementation file contains "/moto-api/config". Shorter query "moto-api" '
+                "matches implementation files:",
+                'pkg/api/urls.py:2:    "{0}/moto-api/$": dashboard,',
+                'pkg/api/urls.py:3:    "{0}/moto-api/reset": reset,',
+                "IMPLEMENTATION_CANDIDATE:pkg/api/urls.py",
+            ],
+        )
 
     def test_recovery_directive_sends_the_edit_to_the_implementation(self) -> None:
         test_only_guard = ActionLoopGuard()
@@ -220,9 +262,10 @@ class EnvironmentTests(unittest.TestCase):
 
         self.assertIn("Only verifier-owned tests have been read", test_only_directive)
         self.assertIn(
-            "The edit belongs in the implementation module those tests import",
+            "The edit belongs in the source file that produces the failing value",
             test_only_directive,
         )
+        self.assertIn("Search for the exact value the failure quotes", test_only_directive)
         self.assertNotIn("edit a file you already read", test_only_directive.casefold())
         self.assertIn(
             "Implementation files already read: pkg/core/config.py.",

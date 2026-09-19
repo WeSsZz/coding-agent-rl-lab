@@ -322,6 +322,46 @@ class DockerEnvironmentTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "PATH_MATCH:moto/stepfunctions/models.py\n")
 
+    def test_search_text_re_queries_a_path_only_the_test_spells_out(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            urls = Path(directory, "moto/moto_api/_internal/urls.py")
+            urls.parent.mkdir(parents=True)
+            urls.write_text(
+                'url_paths = {\n    "{0}/moto-api/$": dashboard,\n}\n',
+                encoding="utf-8",
+            )
+            test_file = Path(directory, "tests/test_config.py")
+            test_file.parent.mkdir(parents=True)
+            test_file.write_text(
+                "from moto.moto_api._internal.urls import url_paths\n\n\ndef test_api():\n"
+                '    resp = get("/moto-api/config")\n',
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-c",
+                    DockerSandboxEnvironment._SEARCH_TEXT_SCRIPT,
+                    "/moto-api/config",
+                ),
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(
+            completed.stdout.splitlines(),
+            [
+                'tests/test_config.py:5:    resp = get("/moto-api/config")',
+                'No implementation file contains "/moto-api/config". Shorter query "moto-api" '
+                "matches implementation files:",
+                'moto/moto_api/_internal/urls.py:2:    "{0}/moto-api/$": dashboard,',
+                "IMPLEMENTATION_CANDIDATE:moto/moto_api/_internal/urls.py",
+            ],
+        )
+
     def test_search_text_suggests_close_path_for_obsolete_filename(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory, "moto/dynamodb/models/__init__.py")

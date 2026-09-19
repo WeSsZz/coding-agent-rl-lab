@@ -14,6 +14,10 @@ SEARCH_TOTAL_LIMIT = 100
 SEARCH_PER_FILE_LIMIT = 5
 SEARCH_FALLBACK_LIMIT = 20
 IMPLEMENTATION_CANDIDATE_LIMIT = 6
+RELATED_QUERY_MATCH_LIMIT = 8
+RELATED_QUERY_FILE_LIMIT = 12
+RELATED_QUERY_MAX_CHARS = 2_400
+_PATH_MATCH_PREFIX = "PATH_MATCH:"
 _IMPORT_STATEMENT = re.compile(
     r"^[ \t]*(?:from[ \t]+([A-Za-z_][\w.]*)[ \t]+import|import[ \t]+([A-Za-z_][\w.]*))",
     re.MULTILINE,
@@ -231,7 +235,7 @@ def _collect_search_matches(
         parts = tuple(part.casefold() for part in PurePosixPath(relative).parts)
         rank = search_location_rank(parts)
         if folded in relative.casefold():
-            ranked.append((rank, 0, relative, 0, f"PATH_MATCH:{relative}"))
+            ranked.append((rank, 0, relative, 0, f"{_PATH_MATCH_PREFIX}{relative}"))
         path = repository / relative
         try:
             if path.stat().st_size > 1_000_000:
@@ -280,6 +284,125 @@ def _implementation_candidate_lines(
     )
 
 
+def _related_query_matches(
+    repository: Path,
+    segment: str,
+    *,
+    listing: Sequence[str],
+    per_file_limit: int,
+) -> dict[str, list[str]]:
+    """Group a segment's implementation matches by file, most relevant file first.
+
+    Path order puts `moto/core/...` ahead of `moto/moto_api/...`, and the busiest file is
+    the one that registers the path, so files whose path carries the segment come first and
+    ties break towards the file with the most matches.
+    """
+
+    grouped: dict[str, list[str]] = {}
+    for rank, relative, line in _collect_search_matches(
+        repository,
+        segment,
+        listing=listing,
+        per_file_limit=per_file_limit,
+    ):
+        if rank == 0 and not line.startswith(_PATH_MATCH_PREFIX):
+            grouped.setdefault(relative, []).append(line)
+    folded = segment.casefold().replace("-", "_")
+    ranked = sorted(
+        grouped.items(),
+        key=lambda item: (
+            folded not in item[0].casefold(),
+            -len(item[1]),
+            item[0],
+        ),
+    )
+    return dict(ranked)
+
+
+def related_query_lines(
+    repository: Path,
+    query: str,
+    *,
+    listing: Sequence[str],
+    per_file_limit: int = SEARCH_PER_FILE_LIMIT,
+    match_limit: int = RELATED_QUERY_MATCH_LIMIT,
+    file_limit: int = RELATED_QUERY_FILE_LIMIT,
+    max_chars: int = RELATED_QUERY_MAX_CHARS,
+) -> list[str]:
+    """Re-query the longest piece of a string that only tests spell out in full.
+
+    A request path such as `/moto-api/config` exists verbatim in the test that calls it and
+    in nothing else: the implementation registers a pattern for it, so an exact search can
+    never reach the module that serves it. Retrying the longest path segment is the one
+    search that separates "the module with the matching name" from the module that answers
+    the request, and the segment has to be specific to be offered, so a generic word such
+    as `config` never displaces the file the policy needs.
+    """
+
+    segments = {
+        segment
+        for segment in (piece.strip("`'\" ") for piece in query.split("/"))
+        if len(segment) >= 3
+    }
+    for segment in sorted(segments, key=len, reverse=True):
+        if segment.casefold() == query.casefold():
+            continue
+        grouped = _related_query_matches(
+            repository,
+            segment,
+            listing=listing,
+            per_file_limit=per_file_limit,
+        )
+        if not grouped or len(grouped) > file_limit:
+            continue
+        shown: list[str] = []
+        for index, lines in enumerate(grouped.values()):
+            if index >= 3:
+                break
+            shown.extend(lines[: 4 if index == 0 else 2])
+        return [
+            f'No implementation file contains "{query}". Shorter query "{segment}" matches '
+            "implementation files:",
+            *_bounded_search_lines(shown[:match_limit], max_chars=max_chars),
+        ]
+    return []
+
+
+def _navigation_lines(
+    repository: Path,
+    query: str,
+    matches: Sequence[tuple[int, str, str]],
+    *,
+    listing: Sequence[str],
+    per_file_limit: int,
+) -> list[str]:
+    """Append the hints that only apply while no implementation file has matched.
+
+    The related-query lines are evidence read from the repository, so they come first; the
+    import-derived candidates are a guess read from the matched test, so they follow it.
+    """
+
+    lines: list[str] = []
+    if not any(rank == 0 for rank, _, _ in matches):
+        lines.extend(
+            related_query_lines(
+                repository,
+                query,
+                listing=listing,
+                per_file_limit=per_file_limit,
+            )
+        )
+    lines.extend(_implementation_candidate_lines(repository, matches, listing=listing))
+    return lines
+
+
+def _remaining_search_chars(hints: Sequence[str], max_chars: int) -> int:
+    """Budget the appended hints inside the same limit as the match lines they follow."""
+
+    reserved = sum(len(line) + 1 for line in hints)
+    return max(max_chars // 2, max_chars - reserved)
+
+
 def search_repository(
     repository: Path,
     query: str,
@@ -295,7 +418,9 @@ def search_repository(
     list lets one large file consume the entire result budget, so a failed query is
     retried with its longest token instead of spending another agent step on nothing.
     The result is trimmed to `max_chars` from the top so the highest-ranked matches
-    survive the prompt budget instead of the tail the model happens to receive.
+    survive the prompt budget instead of the tail the model happens to receive. The
+    navigation hints are appended after that trim, so they are budgeted first: a caller
+    that truncates from the front would otherwise drop the highest-ranked matches.
     """
 
     listing = repository_file_listing(repository)
@@ -307,11 +432,18 @@ def search_repository(
     )
     if matches:
         shown = matches[:total_limit]
+        hints = _navigation_lines(
+            repository,
+            query,
+            shown,
+            listing=listing,
+            per_file_limit=per_file_limit,
+        )
         rendered = _bounded_search_lines(
             [line for _, _, line in shown],
-            max_chars=max_chars,
+            max_chars=_remaining_search_chars(hints, max_chars),
         )
-        rendered.extend(_implementation_candidate_lines(repository, shown, listing=listing))
+        rendered.extend(hints)
         return "\n".join(rendered)
     rendered = [f"No exact matches for: {query}"]
     tokens = sorted(
@@ -329,10 +461,20 @@ def search_repository(
         if token_matches:
             rendered.append(f"Longest token in the query: {token}")
             shown = token_matches[:fallback_limit]
-            rendered.extend(
-                _bounded_search_lines([line for _, _, line in shown], max_chars=max_chars)
+            hints = _navigation_lines(
+                repository,
+                query,
+                shown,
+                listing=listing,
+                per_file_limit=per_file_limit,
             )
-            rendered.extend(_implementation_candidate_lines(repository, shown, listing=listing))
+            rendered.extend(
+                _bounded_search_lines(
+                    [line for _, _, line in shown],
+                    max_chars=_remaining_search_chars(hints, max_chars),
+                )
+            )
+            rendered.extend(hints)
             break
     else:
         candidates = {path.casefold(): path for path in listing}
@@ -553,7 +695,9 @@ def replace_text_mismatch_message(content: str, old: str) -> str:
         "replace_text requires exactly one match, found 0. Search results print one matching "
         "line at a time, so a value joined from two result lines never matches the file. Read "
         "the file and copy `old` from the numbered read_file output, or use replace_lines on "
-        "the range that read shows."
+        "the range that read shows. If this text came from a verifier failure or the issue, run "
+        "search_text with it: the file that produces it is not necessarily the file you have "
+        "open."
     )
 
 
@@ -678,15 +822,16 @@ class ActionLoopGuard:
             parts.append(
                 "Only verifier-owned tests have been read: "
                 + ", ".join(read_files[:5])
-                + ". The edit belongs in the implementation module those tests import, not "
-                "in the test file."
+                + ". The edit belongs in the source file that produces the failing value, "
+                "which is not necessarily the module those tests import, and never in the "
+                "test file."
             )
         if queries:
             parts.append("Queries already used: " + "; ".join(queries[:5]) + ".")
         parts.append(
-            "Do not issue it again. Read the implementation module the tests import and edit "
-            "it with replace_lines on a small range; finish is refused while no source edit "
-            "has been applied."
+            "Do not issue it again. Search for the exact value the failure quotes, read the "
+            "file that produces it, and edit that file with replace_lines on a small range; "
+            "finish is refused while no source edit has been applied."
         )
         return " ".join(parts)
 

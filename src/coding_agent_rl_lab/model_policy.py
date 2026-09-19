@@ -19,7 +19,7 @@ from .contracts import (
 )
 
 
-PROMPT_VERSION = "coding-tools-json-v20"
+PROMPT_VERSION = "coding-tools-json-v21"
 
 #: Conservative characters-per-token used by the context preflight. Real code prompts
 #: tokenize denser than prose, so dividing by three refuses a request slightly before the
@@ -480,7 +480,7 @@ Rules:
 - Search exact identifiers or literals from the failure and source code, not vague natural-language phrases.
 - Search results rank implementation files ahead of tests and documentation, cap matches per file, and stop at 100 matches. If a query has no exact hit, it is retried once with the longest token in it, labelled `Longest token in the query: <token>`; use that evidence instead of repeating the phrase. After reading a test, search for implementation-facing class, method, field, or error names from its calls and assertions; do not search for the test name or test decorators.
 - Search output uses PATH_MATCH:<path> for filename matches, SUGGESTED_PATH:<path> for close paths, and <path>:<line>:<text> only for content matches. Never treat a PATH_MATCH or SUGGESTED_PATH as a line number.
-- When every match is in a test or documentation file, the result ends with IMPLEMENTATION_CANDIDATE:<path> lines: those are the modules the matching tests import. Read one and edit it; the test file only states the expected behavior.
+- When the exact query matches only tests or documentation, the result adds two hints. `Shorter query "<segment>" matches implementation files:` is followed by that segment's real implementation matches, which is how a request path such as `/moto-api/config` reaches the module that registers or answers the path. IMPLEMENTATION_CANDIDATE:<path> lines then name the modules the matching test imports; those are the test's dependencies rather than proof that the failing behavior lives there, so read a related-query match before a candidate.
 - read_file returns numbered lines as `<line number>: <text>`. Copy those numbers exactly into replace_lines start_line/end_line; never re-count lines yourself.
 - read_file shows at most 200 lines and 8000 characters. A truncated or ranged read ends with `[read_file lines A-B: ...]`; continue from the start_line it names instead of guessing.
 - For a large implementation file, use ranged read_file only around a content-match line. For a path-only result, read the file without a range or search for an exact identifier inside it.
@@ -494,7 +494,7 @@ Rules:
 - When replace_text reports the wrong number of matches, it names the lines it found and, for whitespace-only differences, the exact text to use. Copy that value character for character instead of retyping it, or use replace_lines on the line range a read_file showed.
 - An edit that would leave the edited Python file unparseable is refused and not applied, and the refusal names the offending line. Replace the whole statement, including its indentation, in one edit instead of reshaping a line you copied from elsewhere.
 - Budget the episode: reserve at least a third of the remaining steps for editing, running tests, and repairing the patch. Make the first evidence-backed source edit as soon as enough context is available instead of exploring until the budget runs out.
-- Never modify tests or verifier-owned files. Such an attempt is a hard violation that ends the episode immediately with zero reward, so the edit always belongs in the implementation module the test imports.
+- Never modify tests or verifier-owned files. Such an attempt is a hard violation that ends the episode immediately with zero reward. The edit belongs in the source file that produces the failing value, which is not necessarily the module the test imports.
 - Run tests after editing. If they fail, treat the new traceback as the highest-priority evidence: read a 20+ line source range around its referenced implementation line, repair the patch within two tool steps, and run tests again. Do not return to broad searches. A collection error (`found no collectors`, `ImportError while loading conftest`) means an edited module no longer imports: read the module that error names and repair it before anything else.
 - A failed verifier observation names the failing node, the failing statement with its file and line, the exception, and short string values from the failing frame on its first lines. Read the statement before editing anything else, and use those literals as the search terms for the implementation; a message the server returns at runtime is produced by the code that serves it, so search that literal rather than only the URL or the issue wording.
 - Finish only after an edit is applied and run_tests no longer reports the failing assertion. Calling finish with no applied source edit while the verifier fails is refused: the harness returns that failure and expects the edit, so make the change the evidence already supports instead of finishing again.

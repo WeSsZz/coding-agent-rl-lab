@@ -276,6 +276,10 @@ TOTAL_LIMIT = 100
 PER_FILE_LIMIT = 5
 FALLBACK_LIMIT = 20
 CANDIDATE_LIMIT = 6
+RELATED_MATCH_LIMIT = 8
+RELATED_FILE_LIMIT = 12
+RELATED_MAX_CHARS = 2400
+PATH_MATCH_PREFIX = 'PATH_MATCH:'
 MAX_CHARS = 8000
 DOCUMENTATION_DIRECTORIES = {'docs', 'doc', 'examples', 'example'}
 DOCUMENTATION_NAMES = (
@@ -321,7 +325,7 @@ def collect(query, files, per_file_limit):
         parts = tuple(part.casefold() for part in Path(relative).parts)
         rank = location_rank(parts)
         if folded in relative.casefold():
-            ranked.append((rank, 0, relative, 0, f'PATH_MATCH:{relative}'))
+            ranked.append((rank, 0, relative, 0, f'{PATH_MATCH_PREFIX}{relative}'))
         path = Path(relative)
         try:
             if path.stat().st_size > 1_000_000:
@@ -380,6 +384,47 @@ def candidate_lines(matches, files):
     return [f'IMPLEMENTATION_CANDIDATE:{path}' for path in ranked[:CANDIDATE_LIMIT]]
 
 
+def related_lines(query, files):
+    segments = {
+        piece.strip("`'\\" ")
+        for piece in query.split('/')
+        if len(piece.strip("`'\\" ")) >= 3
+    }
+    for segment in sorted(segments, key=len, reverse=True):
+        if segment.casefold() == query.casefold():
+            continue
+        grouped = {}
+        for rank, relative, line in collect(segment, files, PER_FILE_LIMIT):
+            if rank == 0 and not line.startswith(PATH_MATCH_PREFIX):
+                grouped.setdefault(relative, []).append(line)
+        if not grouped or len(grouped) > RELATED_FILE_LIMIT:
+            continue
+        folded = segment.casefold().replace('-', '_')
+        ranked = sorted(
+            grouped.items(),
+            key=lambda item: (folded not in item[0].casefold(), -len(item[1]), item[0]),
+        )
+        shown = []
+        for index, (_, file_lines) in enumerate(ranked):
+            if index >= 3:
+                break
+            shown.extend(file_lines[: 4 if index == 0 else 2])
+        return [
+            f'No implementation file contains "{query}". Shorter query "{segment}" matches '
+            'implementation files:',
+            *bounded(shown[:RELATED_MATCH_LIMIT], RELATED_MAX_CHARS),
+        ]
+    return []
+
+
+def navigation_lines(query, matches, files):
+    lines = []
+    if not any(rank == 0 for rank, _, _ in matches):
+        lines.extend(related_lines(query, files))
+    lines.extend(candidate_lines(matches, files))
+    return lines
+
+
 def bounded(lines, max_chars):
     rendered = []
     used_chars = 0
@@ -401,8 +446,10 @@ files = listing()
 matches = collect(query, files, PER_FILE_LIMIT)
 if matches:
     shown = matches[:TOTAL_LIMIT]
-    output = bounded([line for _, _, line in shown], MAX_CHARS)
-    output.extend(candidate_lines(shown, files))
+    nav = navigation_lines(query, shown, files)
+    reserved = sum(len(line) + 1 for line in nav)
+    output = bounded([line for _, _, line in shown], max(MAX_CHARS // 2, MAX_CHARS - reserved))
+    output.extend(nav)
 else:
     output = [f'No exact matches for: {query}']
     tokens = sorted({token for token in query.split() if len(token) >= 4}, key=len, reverse=True)
@@ -411,8 +458,12 @@ else:
         if token_matches:
             output.append(f'Longest token in the query: {token}')
             shown = token_matches[:FALLBACK_LIMIT]
-            output.extend(bounded([line for _, _, line in shown], MAX_CHARS))
-            output.extend(candidate_lines(shown, files))
+            nav = navigation_lines(query, shown, files)
+            reserved = sum(len(line) + 1 for line in nav)
+            output.extend(
+                bounded([line for _, _, line in shown], max(MAX_CHARS // 2, MAX_CHARS - reserved))
+            )
+            output.extend(nav)
             break
     else:
         candidates = {name.casefold(): name for name in files}
@@ -483,7 +534,9 @@ def mismatch_message(content, old):
         'replace_text requires exactly one match, found 0. Search results print one matching '
         'line at a time, so a value joined from two result lines never matches the file. Read '
         'the file and copy `old` from the numbered read_file output, or use replace_lines on '
-        'the range that read shows.'
+        'the range that read shows. If this text came from a verifier failure or the issue, run '
+        'search_text with it: the file that produces it is not necessarily the file you have '
+        'open.'
     )
 
 

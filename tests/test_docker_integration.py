@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -81,7 +83,7 @@ class DockerIntegrationTests(unittest.TestCase):
                 test_command=("python", "-m", "unittest", "discover", "-s", "tests", "-v"),
                 split=DatasetSplit.DEVELOPMENT,
                 provenance="generated-docker-integration-smoke-v1",
-                max_steps=4,
+                max_steps=8,
             )
             spec = DockerTaskSpec(
                 task_id=task.task_id,
@@ -102,6 +104,11 @@ class DockerIntegrationTests(unittest.TestCase):
                 self.assertIn("Tests failed", observation)
                 self.assertFalse(environment.baseline_result.passed)
 
+                refused = environment.step(AgentAction(ActionKind.FINISH))
+                self.assertFalse(refused.terminated)
+                self.assertTrue(refused.observation.startswith("Tool error: finish refused"))
+                self.assertIn("Tests failed", refused.observation)
+
                 read = environment.step(
                     AgentAction(ActionKind.READ_FILE, {"path": "bug.py"})
                 )
@@ -115,13 +122,34 @@ class DockerIntegrationTests(unittest.TestCase):
                 self.assertTrue(searched.observation.splitlines()[0].startswith("bug.py:"))
                 self.assertIn("tests/test_bug.py:", searched.observation)
 
+                # A value joined from two search lines never matches the file, and the
+                # refusal has to hand back the exact text so one more step repairs it.
+                joined = environment.step(
+                    AgentAction(
+                        ActionKind.REPLACE_TEXT,
+                        {
+                            "path": "bug.py",
+                            "old": "def is_fixed(): return False",
+                            "new": "def is_fixed():\n    return True",
+                        },
+                    )
+                )
+                self.assertFalse(joined.terminated)
+                self.assertIn("requires exactly one match, found 0", joined.observation)
+                quoted = re.search(r"byte for byte: ('.+?')\.", joined.observation)
+                self.assertIsNotNone(quoted, joined.observation)
+                self.assertIn("lines 1-2", joined.observation)
                 changed = environment.step(
                     AgentAction(
                         ActionKind.REPLACE_TEXT,
-                        {"path": "bug.py", "old": "return False", "new": "return True"},
+                        {
+                            "path": "bug.py",
+                            "old": ast.literal_eval(quoted.group(1)),
+                            "new": "def is_fixed():\n    return True",
+                        },
                     )
                 )
-                self.assertFalse(changed.terminated)
+                self.assertEqual(changed.observation, "Updated bug.py.")
                 tested = environment.step(AgentAction(ActionKind.RUN_TESTS))
                 self.assertTrue(tested.terminated)
                 self.assertTrue(tested.test_result.passed)

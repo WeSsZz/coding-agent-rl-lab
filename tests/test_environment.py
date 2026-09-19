@@ -1,16 +1,37 @@
 from __future__ import annotations
 
+import ast
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
-from coding_agent_rl_lab.contracts import ActionKind, AgentAction
+from coding_agent_rl_lab.contracts import ActionKind, AgentAction, TestResult
 from coding_agent_rl_lab.evaluation import load_builtin_tasks
 from coding_agent_rl_lab.environment import (
+    ActionLoopGuard,
     LocalFixtureEnvironment,
+    failure_summary,
     render_numbered_window,
+    replace_text_mismatch_message,
     search_repository,
+    verifier_output_detail,
 )
+
+
+def _write_importing_test_repository(repository: Path) -> None:
+    """A repository whose only hit for the searched route is the test that imports the fix."""
+
+    (repository / "tests").mkdir()
+    (repository / "pkg" / "core").mkdir(parents=True)
+    (repository / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (repository / "pkg" / "core" / "__init__.py").write_text("", encoding="utf-8")
+    (repository / "pkg" / "core" / "config.py").write_text("BATCH = 1\n", encoding="utf-8")
+    (repository / "tests" / "test_config.py").write_text(
+        'from pkg.core.config import BATCH\n\n\ndef test_api():\n'
+        '    response = get("/moto-api/config")\n',
+        encoding="utf-8",
+    )
 
 
 class EnvironmentTests(unittest.TestCase):
@@ -73,6 +94,223 @@ class EnvironmentTests(unittest.TestCase):
 
             self.assertIn("requires reading the target file first", unread.observation)
             self.assertIn("requires reading the target file first", stale.observation)
+
+    def test_finish_without_an_edit_is_refused_while_the_verifier_fails(self) -> None:
+        with LocalFixtureEnvironment(self.root) as environment:
+            environment.reset(self.task)
+            refused = environment.step(AgentAction(ActionKind.FINISH))
+
+            self.assertFalse(refused.terminated)
+            self.assertIsNone(refused.violation)
+            self.assertTrue(refused.observation.startswith("Tool error: finish refused"))
+            self.assertIn("no source file has been edited", refused.observation)
+            self.assertIn("Tests failed", refused.observation)
+
+    def test_finish_is_accepted_after_the_source_edit(self) -> None:
+        with LocalFixtureEnvironment(self.root) as environment:
+            environment.reset(self.task)
+            environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_TEXT,
+                    {
+                        "path": "calculator.py",
+                        "old": "return list(range(start, end))",
+                        "new": "return list(range(start, end + 1))",
+                    },
+                )
+            )
+            finished = environment.step(AgentAction(ActionKind.FINISH))
+
+            self.assertTrue(finished.terminated)
+            self.assertTrue(finished.test_result.passed)
+
+    def test_replace_text_quotes_the_exact_text_when_only_whitespace_differs(self) -> None:
+        with LocalFixtureEnvironment(self.root) as environment:
+            environment.reset(self.task)
+            (environment.repository / "sample.py").write_text(
+                "def is_fixed():\n    return False\n",
+                encoding="utf-8",
+            )
+            failed = environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_TEXT,
+                    {
+                        "path": "sample.py",
+                        "old": "def is_fixed(): return False",
+                        "new": "def is_fixed():\n    return True",
+                    },
+                )
+            )
+            quoted = re.search(r"byte for byte: ('.+?')\.", failed.observation)
+            self.assertIsNotNone(quoted, failed.observation)
+            exact = ast.literal_eval(quoted.group(1))
+            repaired = environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_TEXT,
+                    {"path": "sample.py", "old": exact, "new": "def is_fixed():\n    return True"},
+                )
+            )
+
+            self.assertFalse(failed.terminated)
+            self.assertIn("lines 1-2", failed.observation)
+            self.assertEqual(exact, "def is_fixed():\n    return False")
+            self.assertEqual(repaired.observation, "Updated sample.py.")
+
+    def test_replace_text_lists_every_ambiguous_match(self) -> None:
+        content = "value = 1\nother = 2\nvalue = 1\n"
+
+        message = replace_text_mismatch_message(content, "value = 1")
+
+        self.assertIn("found 2: lines 1, 3", message)
+        self.assertIn("matches exactly once", message)
+
+    def test_replace_text_mismatch_without_a_close_match_points_at_a_read(self) -> None:
+        message = replace_text_mismatch_message("value = 1\n", "absent_call()")
+
+        self.assertIn("found 0", message)
+        self.assertIn("numbered read_file output", message)
+
+    def test_search_points_at_the_implementation_when_every_match_is_a_test(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            _write_importing_test_repository(repository)
+
+            test_only = search_repository(repository, "/moto-api/config")
+            implementation_hit = search_repository(repository, "BATCH")
+
+        self.assertEqual(
+            test_only.splitlines(),
+            [
+                'tests/test_config.py:5:    response = get("/moto-api/config")',
+                "IMPLEMENTATION_CANDIDATE:pkg/core/config.py",
+            ],
+        )
+        self.assertNotIn("IMPLEMENTATION_CANDIDATE", implementation_hit)
+
+    def test_recovery_directive_sends_the_edit_to_the_implementation(self) -> None:
+        test_only_guard = ActionLoopGuard()
+        test_only_guard.record(
+            AgentAction(ActionKind.READ_FILE, {"path": "tests/test_config.py"}),
+            "1: from pkg.core.config import BATCH",
+        )
+        test_only_guard.record(
+            AgentAction(ActionKind.SEARCH_TEXT, {"query": "/moto-api/config"}),
+            "tests/test_config.py:5:    response = get(\"/moto-api/config\")",
+        )
+        test_only_guard.record(
+            AgentAction(ActionKind.FINISH),
+            "Tool error: finish refused: the verifier still fails",
+        )
+        implementation_guard = ActionLoopGuard()
+        implementation_guard.record(
+            AgentAction(ActionKind.READ_FILE, {"path": "pkg/core/config.py"}),
+            "1: BATCH = 1",
+        )
+        implementation_guard.record(
+            AgentAction(ActionKind.FINISH),
+            "Tool error: finish refused: the verifier still fails",
+        )
+
+        test_only_guard.rejection_for(AgentAction(ActionKind.FINISH))
+        test_only_directive = test_only_guard.rejection_for(AgentAction(ActionKind.FINISH))
+        implementation_guard.rejection_for(AgentAction(ActionKind.FINISH))
+        implementation_directive = implementation_guard.rejection_for(
+            AgentAction(ActionKind.FINISH)
+        )
+
+        self.assertIn("Only verifier-owned tests have been read", test_only_directive)
+        self.assertIn(
+            "The edit belongs in the implementation module those tests import",
+            test_only_directive,
+        )
+        self.assertNotIn("edit a file you already read", test_only_directive.casefold())
+        self.assertIn(
+            "Implementation files already read: pkg/core/config.py.",
+            implementation_directive,
+        )
+
+    def test_edit_that_would_break_the_file_is_rejected(self) -> None:
+        with LocalFixtureEnvironment(self.root) as environment:
+            environment.reset(self.task)
+            environment.step(AgentAction(ActionKind.READ_FILE, {"path": "calculator.py"}))
+            rejected = environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_LINES,
+                    {
+                        "path": "calculator.py",
+                        "start_line": 4,
+                        "end_line": 4,
+                        "new": "        return list(range(start, end + 1))",
+                    },
+                )
+            )
+
+            self.assertTrue(rejected.observation.startswith("Tool error: edit not applied"))
+            self.assertIn("line 4", rejected.observation)
+            self.assertEqual(environment.changed_files(), ())
+            self.assertEqual(
+                (environment.repository / "calculator.py").read_text(encoding="utf-8"),
+                "def inclusive_range(start: int, end: int) -> list[int]:\n"
+                '    """Return every integer from start through end."""\n'
+                "\n"
+                "    return list(range(start, end))\n",
+            )
+
+    def test_verifier_output_detail_keeps_the_stream_that_names_the_failure(self) -> None:
+        result = TestResult(
+            ("pytest",),
+            False,
+            4,
+            "collected 0 items\nImportError while loading conftest\n"
+            "ERROR: found no collectors for tests/test_core/test_config.py::test_api",
+            "ERROR: found no collectors for tests/test_core/test_config.py::test_api",
+            1.0,
+            False,
+        )
+
+        detail = verifier_output_detail(result)
+
+        self.assertIn("ImportError while loading conftest", detail)
+        self.assertEqual(detail.count("found no collectors"), 1)
+
+    def test_failure_summary_lifts_the_node_error_and_frame_literals(self) -> None:
+        result = TestResult(
+            ("pytest",),
+            False,
+            1,
+            "tests/test_core/test_config.py F\n"
+            "self = <json.decoder.JSONDecoder object at 0x71cf>\n"
+            "s = 'Not yet implemented', idx = 0\n"
+            ">       assert resp.json()['batch'] == {'use_docker': True}\n"
+            "\n"
+            "tests/test_core/test_config.py:20: \n"
+            ">           raise JSONDecodeError('Expecting value', s)\n"
+            "\n"
+            "/opt/miniconda3/lib/python3.12/site-packages/requests/models.py:978: \n"
+            "E           json.decoder.JSONDecodeError: Expecting value: line 1 column 1\n"
+            "FAILED tests/test_core/test_config.py::test_change_configuration_using_api - ...\n",
+            "",
+            1.0,
+            False,
+        )
+
+        summary = failure_summary(result)
+
+        self.assertEqual(
+            summary.splitlines(),
+            [
+                "[failing tests] tests/test_core/test_config.py::"
+                "test_change_configuration_using_api",
+                "[failing statement] tests/test_core/test_config.py:20: "
+                "assert resp.json()['batch'] == {'use_docker': True}",
+                "[last error] json.decoder.JSONDecodeError: Expecting value: line 1 column 1",
+                "[string values in the failing frame] s = 'Not yet implemented'",
+            ],
+        )
+        self.assertEqual(
+            failure_summary(TestResult(("pytest",), True, 0, "1 passed", "", 1.0, False)),
+            "",
+        )
 
     def test_path_escape_is_a_hard_violation(self) -> None:
         with LocalFixtureEnvironment(self.root) as environment:

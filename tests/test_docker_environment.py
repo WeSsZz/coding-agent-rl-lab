@@ -13,6 +13,11 @@ from coding_agent_rl_lab.docker_environment import (
     DockerSandboxEnvironment,
     DockerTaskSpec,
 )
+from coding_agent_rl_lab.environment import (
+    python_edit_syntax_error,
+    replace_text_mismatch_message,
+    search_repository,
+)
 
 
 class FakeDockerRunner:
@@ -128,6 +133,32 @@ class DockerEnvironmentTests(unittest.TestCase):
             self.assertEqual(environment.changed_files(), ())
         finally:
             environment.close()
+
+    def test_finish_without_an_edit_is_refused_before_any_verifier_rerun(self) -> None:
+        runner = FakeDockerRunner(self.base_commit)
+        environment = DockerSandboxEnvironment(self.spec, DockerSandboxConfig(), runner)
+        try:
+            environment.reset(self.task)
+            refused = environment.step(AgentAction(ActionKind.FINISH))
+            runs_after_refusal = runner.test_runs
+            environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_TEXT,
+                    {"path": "src/bug.py", "old": "return False", "new": "return True"},
+                )
+            )
+            finished = environment.step(AgentAction(ActionKind.FINISH))
+        finally:
+            environment.close()
+
+        self.assertFalse(refused.terminated)
+        self.assertTrue(refused.observation.startswith("Tool error: finish refused"))
+        self.assertIn("Tests failed", refused.observation)
+        # The unrepaired baseline failure is still valid evidence, so it is quoted
+        # instead of paying for a second verifier run inside the container.
+        self.assertEqual(runs_after_refusal, 1)
+        self.assertTrue(finished.terminated)
+        self.assertTrue(finished.test_result.passed)
 
     def test_replace_lines_requires_read_and_updates_source(self) -> None:
         runner = FakeDockerRunner(self.base_commit)
@@ -433,6 +464,99 @@ class DockerEnvironmentTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(updated, "one\nreplacement\nthree\n")
+
+    def test_replace_text_script_matches_the_local_mismatch_message(self) -> None:
+        mismatches = (
+            ("def is_fixed():\n    return False\n", "def is_fixed(): return False"),
+            ("def is_fixed():\n    return False\n", "absent_call()"),
+            ("value = 1\nother = 2\nvalue = 1\n", "value = 1"),
+        )
+        for content, old in mismatches:
+            with self.subTest(old=old), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory, "example.py")
+                path.write_text(content, encoding="utf-8")
+                completed = subprocess.run(
+                    (
+                        sys.executable,
+                        "-c",
+                        DockerSandboxEnvironment._REPLACE_TEXT_SCRIPT,
+                        "example.py",
+                        old,
+                        "replacement",
+                    ),
+                    cwd=directory,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+                self.assertEqual(completed.returncode, 1)
+                self.assertEqual(path.read_text(encoding="utf-8"), content)
+                self.assertEqual(
+                    completed.stderr.strip(),
+                    replace_text_mismatch_message(content, old),
+                )
+
+    def test_search_text_script_matches_the_local_candidate_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory, "repo")
+            (repository / "tests").mkdir(parents=True)
+            (repository / "pkg" / "core").mkdir(parents=True)
+            (repository / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+            (repository / "pkg" / "core" / "__init__.py").write_text("", encoding="utf-8")
+            (repository / "pkg" / "core" / "config.py").write_text("BATCH = 1\n", encoding="utf-8")
+            (repository / "tests" / "test_config.py").write_text(
+                'from pkg.core.config import BATCH\n\n\ndef test_api():\n'
+                '    response = get("/moto-api/config")\n',
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-c",
+                    DockerSandboxEnvironment._SEARCH_TEXT_SCRIPT,
+                    "/moto-api/config",
+                ),
+                cwd=repository,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            expected = search_repository(repository, "/moto-api/config")
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), expected)
+        self.assertIn("IMPLEMENTATION_CANDIDATE:pkg/core/config.py", expected)
+
+    def test_edit_scripts_refuse_a_python_edit_that_would_not_parse(self) -> None:
+        content = "def is_fixed():\n    value = 1\n    return False\n"
+        broken = "def is_fixed():\n    value = 1\n        return True\n"
+        cases = (
+            (
+                DockerSandboxEnvironment._REPLACE_LINES_SCRIPT,
+                ("example.py", "3", "3", "        return True"),
+            ),
+            (
+                DockerSandboxEnvironment._REPLACE_TEXT_SCRIPT,
+                ("example.py", "    return False", "        return True"),
+            ),
+        )
+        for script, arguments in cases:
+            with self.subTest(script=arguments), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory, "example.py")
+                path.write_text(content, encoding="utf-8")
+                completed = subprocess.run(
+                    (sys.executable, "-c", script, *arguments),
+                    cwd=directory,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                expected = python_edit_syntax_error("example.py", broken)
+
+                self.assertEqual(completed.returncode, 1)
+                self.assertEqual(path.read_text(encoding="utf-8"), content)
+                self.assertEqual(completed.stderr.strip(), expected)
 
     def test_search_text_ranks_source_before_tests_and_docs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

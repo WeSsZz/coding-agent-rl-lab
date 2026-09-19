@@ -87,7 +87,7 @@ class OpenAICompatiblePolicyTests(unittest.TestCase):
         self.assertNotIn("PRIVATE-TEST-PATCH", recorded_prompt)
         self.assertNotIn("secret-token", json.dumps(policy.manifest.metadata))
         self.assertIn("test_decimal", recorded_prompt)
-        self.assertEqual(policy.manifest.metadata["prompt_version"], "coding-tools-json-v15")
+        self.assertEqual(policy.manifest.metadata["prompt_version"], "coding-tools-json-v20")
         self.assertIn(
             "reserve at least a third of the remaining steps",
             decision.input_messages[0]["content"],
@@ -411,6 +411,45 @@ class OpenAICompatiblePolicyTests(unittest.TestCase):
                 model="example/coder",
                 api_base="https://user:password@example.invalid/v1",
             )
+
+    def test_sampling_penalties_are_optional_and_recorded_in_the_manifest(self) -> None:
+        transport = FakeTransport([_response('{"kind":"finish","arguments":{}}')])
+        policy = OpenAICompatiblePolicy(
+            OpenAICompatiblePolicyConfig(
+                model="example/coder",
+                repetition_penalty=1.1,
+                frequency_penalty=0.2,
+            ),
+            transport=transport,
+        )
+
+        policy.next_action(_task(), (), seed=23)
+
+        payload = transport.calls[0][1]
+        self.assertEqual(payload["repetition_penalty"], 1.1)
+        self.assertEqual(payload["frequency_penalty"], 0.2)
+        self.assertNotIn("presence_penalty", payload)
+        self.assertEqual(policy.manifest.metadata["repetition_penalty"], 1.1)
+        self.assertIsNone(policy.manifest.metadata["presence_penalty"])
+
+    def test_penalty_defaults_leave_the_payload_untouched(self) -> None:
+        transport = FakeTransport([_response('{"kind":"finish","arguments":{}}')])
+        policy = OpenAICompatiblePolicy(
+            OpenAICompatiblePolicyConfig(model="example/coder"),
+            transport=transport,
+        )
+
+        policy.next_action(_task(), (), seed=24)
+
+        payload = transport.calls[0][1]
+        self.assertNotIn("repetition_penalty", payload)
+        self.assertNotIn("frequency_penalty", payload)
+
+    def test_invalid_penalties_are_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "repetition_penalty"):
+            OpenAICompatiblePolicyConfig(model="example/coder", repetition_penalty=0.0)
+        with self.assertRaisesRegex(ValueError, "frequency_penalty"):
+            OpenAICompatiblePolicyConfig(model="example/coder", frequency_penalty=2.5)
 
 
 if __name__ == "__main__":

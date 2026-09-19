@@ -186,6 +186,13 @@ class Service(CallbackBase):
             environment.reset(task_id="clamp-negative-values")
             ranged = environment.read_file("values.py", start_line=1, end_line=20)
             self.assertIn("clamp_non_negative", ranged)
+            # `finish` is refused while the verifier fails and no source edit exists, so
+            # the audited action completion now has to carry the edit with it.
+            environment.replace_text(
+                "values.py",
+                "    return value\n",
+                "    return max(0, value)\n",
+            )
             environment.finish()
 
             records = [
@@ -197,16 +204,43 @@ class Service(CallbackBase):
             self.assertEqual(records[0]["completion_source"], "action")
             self.assertIn("strict_reward", records[0])
             self.assertIn("reward_components", records[0])
-            self.assertEqual(records[0]["action_kinds"], ["read_file", "finish"])
+            self.assertEqual(
+                records[0]["action_kinds"],
+                ["read_file", "replace_text", "finish"],
+            )
             self.assertEqual(
                 records[0]["action_outcomes"],
                 [
                     {"kind": "read_file", "outcome": "ok"},
+                    {"kind": "replace_text", "outcome": "updated"},
                     {"kind": "finish", "outcome": "terminated"},
                 ],
             )
             self.assertNotIn("observation", records[0])
             self.assertNotIn("token", records[0])
+
+    def test_unpatched_finish_is_refused_over_the_wire_then_finalize_scores_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audit_path = Path(temp_dir) / "reward-audit.jsonl"
+            environment = RemoteGRPOCodingEnvironment(
+                self.base_url,
+                self.token,
+                reward_audit_path=audit_path,
+            )
+            environment.reset(task_id="clamp-negative-values")
+            environment.read_file("values.py")
+            refused = environment.finish()
+
+            self.assertIn("finish refused", refused)
+            self.assertEqual(environment.reward, 0.0)
+            records = [
+                json.loads(line)
+                for line in audit_path.read_text(encoding="utf-8").splitlines()
+            ]
+
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["completion_source"], "finalize")
+            self.assertEqual(records[0]["action_kinds"], ["read_file", "finish"])
 
     def test_inactive_probe_reward_is_safe_for_trl_introspection(self) -> None:
         environment = RemoteGRPOCodingEnvironment(self.base_url, self.token)

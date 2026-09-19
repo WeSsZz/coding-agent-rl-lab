@@ -165,6 +165,45 @@ class FailureAnalysisTests(unittest.TestCase):
         self.assertEqual(classify_trajectory(legacy), "loop")
         self.assertEqual(classify_trajectory(exploring), "no_edit_attempt")
 
+    def test_repeated_refused_finishes_are_attributed_as_a_loop(self) -> None:
+        steps = tuple(
+            TrajectoryStep(
+                sequence=index + 1,
+                action=AgentAction(ActionKind.FINISH),
+                observation=(
+                    "Tool error: finish refused: the verifier still fails and no source file "
+                    "has been edited."
+                    if index < 4
+                    else "Step budget exhausted."
+                ),
+                terminated=False,
+            )
+            for index in range(6)
+        )
+        trajectory = Trajectory(
+            trajectory_id="trajectory-refused-finish",
+            task_id="task-1",
+            repetition=1,
+            seed=123,
+            policy=PolicyManifest("policy", "1", "test"),
+            steps=steps,
+            reward=RewardVector(
+                task_success=False,
+                tests_passed=False,
+                regression_free=False,
+                patch_created=False,
+                tool_calls=6,
+                steps=6,
+                loop_rejections=0,
+            ),
+            changed_files=(),
+            baseline_tests_passed=False,
+            final_tests_passed=False,
+            initial_observation="baseline failed",
+        )
+
+        self.assertEqual(classify_trajectory(trajectory), "loop")
+
     def test_report_contains_counts_without_raw_content(self) -> None:
         report = build_failure_report(
             (_trajectory(changed_files=("src/code.py",)), _trajectory())

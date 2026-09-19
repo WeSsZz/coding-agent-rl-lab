@@ -63,6 +63,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Number of pinned development tasks to run (max {len(PINNED_DEVELOPMENT_ROWS)})",
     )
     parser.add_argument("--temperature", type=float, default=0.2)
+    parser.add_argument(
+        "--repetition-penalty",
+        type=float,
+        default=None,
+        help="vLLM repetition penalty; a weak policy repeats an identical tool call without it",
+    )
+    parser.add_argument("--frequency-penalty", type=float, default=None)
+    parser.add_argument("--presence-penalty", type=float, default=None)
     parser.add_argument("--max-tokens", type=int, default=1024)
     parser.add_argument(
         "--max-steps",
@@ -221,6 +229,9 @@ def main() -> None:
             model=args.model,
             api_base=args.api_base,
             temperature=args.temperature,
+            repetition_penalty=args.repetition_penalty,
+            frequency_penalty=args.frequency_penalty,
+            presence_penalty=args.presence_penalty,
             max_tokens=args.max_tokens,
             context_window_tokens=args.context_window_tokens,
         )

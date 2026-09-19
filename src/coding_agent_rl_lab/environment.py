@@ -2,16 +2,29 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import re
 import shutil
 import tempfile
 from pathlib import Path, PurePosixPath
-from typing import Any, Protocol, Sequence, runtime_checkable
+from typing import Any, Callable, Protocol, Sequence, runtime_checkable
 
 READ_FILE_DEFAULT_LINES = 200
 READ_FILE_MAX_CHARS = 8_000
 SEARCH_TOTAL_LIMIT = 100
 SEARCH_PER_FILE_LIMIT = 5
 SEARCH_FALLBACK_LIMIT = 20
+IMPLEMENTATION_CANDIDATE_LIMIT = 6
+_IMPORT_STATEMENT = re.compile(
+    r"^[ \t]*(?:from[ \t]+([A-Za-z_][\w.]*)[ \t]+import|import[ \t]+([A-Za-z_][\w.]*))",
+    re.MULTILINE,
+)
+_FAILED_NODE = re.compile(r"^(?:FAILED|ERROR)[ \t]+(\S+)", re.MULTILINE)
+_RAISED_LINE = re.compile(r"^E[ \t]+(\S.*)$", re.MULTILINE)
+_FRAME_STRING = re.compile(r"^[ \t]*(\w+)[ \t]*=[ \t]*'([^'\n]{1,80})'", re.MULTILINE)
+_FRAME_MARK = re.compile(
+    r"^>[ \t]+(?P<statement>.*)\n\s*\n(?P<path>[^\s:]+):(?P<line>\d+):[ \t]*$",
+    re.MULTILINE,
+)
 _DOCUMENTATION_DIRECTORIES = frozenset({"docs", "doc", "examples", "example"})
 _DOCUMENTATION_NAMES = (
     "changelog",
@@ -151,13 +164,67 @@ def repository_file_listing(repository: Path) -> tuple[str, ...]:
     )
 
 
+def is_test_path(relative_path: str) -> bool:
+    """Report whether a workspace path belongs to the verifier-owned test tree."""
+
+    return any(
+        part == "tests" or part.startswith("test")
+        for part in (piece.casefold() for piece in PurePosixPath(relative_path).parts)
+    )
+
+
+def imported_module_paths(text: str, *, exists: Callable[[str], bool]) -> list[str]:
+    """Resolve the repository files for the modules `text` imports, deepest module first.
+
+    A policy that searches an issue-specific literal usually lands on the verifier-owned
+    test that asserts the behavior, and that test's imports are the only pointer it has to
+    the implementation. Resolving them costs one pass over the text and turns "every match
+    is a test" into a concrete file to read.
+    """
+
+    resolved: list[str] = []
+    for match in _IMPORT_STATEMENT.finditer(text):
+        module = match.group(1) or match.group(2)
+        if not module:
+            continue
+        relative = module.replace(".", "/")
+        for candidate in (f"{relative}.py", f"{relative}/__init__.py"):
+            if exists(candidate) and candidate not in resolved:
+                resolved.append(candidate)
+                break
+    return sorted(
+        resolved,
+        key=lambda path: (-path.count("/"), path.endswith("/__init__.py")),
+    )
+
+
+def implementation_candidate_lines(
+    sources: Sequence[str],
+    *,
+    exists: Callable[[str], bool],
+    limit: int = IMPLEMENTATION_CANDIDATE_LIMIT,
+) -> list[str]:
+    """Name the implementation modules a test-only search result actually exercises."""
+
+    resolved: list[str] = []
+    for source in sources:
+        for path in imported_module_paths(source, exists=exists):
+            if path not in resolved:
+                resolved.append(path)
+    ranked = sorted(
+        resolved,
+        key=lambda path: (-path.count("/"), path.endswith("/__init__.py")),
+    )
+    return [f"IMPLEMENTATION_CANDIDATE:{path}" for path in ranked[:limit]]
+
+
 def _collect_search_matches(
     repository: Path,
     query: str,
     *,
     listing: Sequence[str],
     per_file_limit: int,
-) -> list[str]:
+) -> list[tuple[int, str, str]]:
     folded = query.casefold()
     ranked: list[tuple[int, int, str, int, str]] = []
     for relative in listing:
@@ -181,7 +248,36 @@ def _collect_search_matches(
             if matched_in_file >= per_file_limit:
                 break
     ranked.sort(key=lambda item: item[:4])
-    return [item[4] for item in ranked]
+    return [(item[0], item[2], item[4]) for item in ranked]
+
+
+def _implementation_candidate_lines(
+    repository: Path,
+    matches: Sequence[tuple[int, str, str]],
+    *,
+    listing: Sequence[str],
+) -> list[str]:
+    """Add the test-only navigation hint, or nothing when an implementation already matched."""
+
+    matched_files: list[str] = []
+    for rank, relative, _ in matches:
+        if rank == 0:
+            return []
+        if relative not in matched_files:
+            matched_files.append(relative)
+    if not matched_files:
+        return []
+    available = set(listing)
+    sources: list[str] = []
+    for relative in matched_files[:3]:
+        try:
+            sources.append((repository / relative).read_text(encoding="utf-8"))
+        except (OSError, UnicodeError):
+            continue
+    return implementation_candidate_lines(
+        sources,
+        exists=lambda path: path in available,
+    )
 
 
 def search_repository(
@@ -210,9 +306,13 @@ def search_repository(
         per_file_limit=per_file_limit,
     )
     if matches:
-        return "\n".join(
-            _bounded_search_lines(matches[:total_limit], max_chars=max_chars)
+        shown = matches[:total_limit]
+        rendered = _bounded_search_lines(
+            [line for _, _, line in shown],
+            max_chars=max_chars,
         )
+        rendered.extend(_implementation_candidate_lines(repository, shown, listing=listing))
+        return "\n".join(rendered)
     rendered = [f"No exact matches for: {query}"]
     tokens = sorted(
         {token for token in query.split() if len(token) >= 4},
@@ -228,12 +328,11 @@ def search_repository(
         )
         if token_matches:
             rendered.append(f"Longest token in the query: {token}")
+            shown = token_matches[:fallback_limit]
             rendered.extend(
-                _bounded_search_lines(
-                    token_matches[:fallback_limit],
-                    max_chars=max_chars,
-                )
+                _bounded_search_lines([line for _, _, line in shown], max_chars=max_chars)
             )
+            rendered.extend(_implementation_candidate_lines(repository, shown, listing=listing))
             break
     else:
         candidates = {path.casefold(): path for path in listing}
@@ -294,6 +393,192 @@ def replace_line_range(
     return "".join(lines[: start_line - 1]) + replacement + "".join(lines[end_line:])
 
 
+def _occurrences(content: str, old: str) -> list[int]:
+    positions: list[int] = []
+    start = content.find(old)
+    while start >= 0:
+        positions.append(start)
+        start = content.find(old, start + 1)
+    return positions
+
+
+def python_edit_syntax_error(relative_path: str, updated: str) -> str | None:
+    """Refuse an edit that would leave an edited Python file unparseable.
+
+    A replacement that spans the wrong lines, or that keeps the indentation of the
+    text it copied from another line, still matches and still writes. The container
+    then imports the broken module, pytest reports a collection error instead of the
+    assertion under test, and the policy has no way to see what it broke. Checking the
+    edit before it is written keeps that failure recoverable and names the line.
+    """
+
+    if not relative_path.endswith(".py"):
+        return None
+    try:
+        compile(updated, relative_path, "exec")
+    except SyntaxError as exc:
+        return (
+            f"edit not applied: it would leave {relative_path} unparseable "
+            f"({type(exc).__name__}: {exc.msg} at line {exc.lineno}). Replace the whole "
+            "statement, including its indentation, in one edit."
+        )
+    return None
+
+
+def verifier_output_streams(result: TestResult) -> str:
+    """Return the most informative captured stream, plus the other when it adds content.
+
+    A failing graded command can report the same failure in `stdout` (the pytest session
+    and the import traceback) and in `stderr` (a two-line collection error). Preferring
+    `stderr` outright hid the traceback the policy needed, so the longer stream wins and
+    the shorter one is appended only when the longer one does not already contain it.
+    """
+
+    streams = [text.strip() for text in (result.stdout, result.stderr) if text.strip()]
+    if not streams:
+        return ""
+    detail = max(streams, key=len)
+    for other in streams:
+        if other != detail and other not in detail:
+            detail = f"{detail}\n{other}"
+    return detail
+
+
+def verifier_output_detail(result: TestResult, *, max_chars: int = 4_000) -> str:
+    """Return the tail of the most informative captured stream."""
+
+    return verifier_output_streams(result)[-max_chars:]
+
+
+def failure_summary(result: TestResult, *, max_chars: int = 500) -> str:
+    """Lift the actionable head out of a failed verifier run.
+
+    pytest renders a failure as a screen of framework source around one assertion, so a
+    weak policy reads the wrong lines, or none of them. Naming the failing node, the
+    exception that ended the run, and the short string values in the failing frame is a
+    deterministic extraction of the same evidence, and the prompt already asks the policy
+    to search the literals a failure contains.
+    """
+
+    if result.passed:
+        return ""
+    text = verifier_output_streams(result)
+    failures: list[str] = []
+    for match in _FAILED_NODE.finditer(text):
+        node = match.group(1)
+        if node not in failures:
+            failures.append(node)
+    statement: str | None = None
+    for match in _FRAME_MARK.finditer(text):
+        path = match.group("path")
+        if path.startswith("/") or "site-packages" in path:
+            continue
+        statement = (
+            f"{path}:{match.group('line')}: "
+            f"{' '.join(match.group('statement').split())}"
+        )
+    raised = _RAISED_LINE.findall(text)
+    literals: list[str] = []
+    for name, value in _FRAME_STRING.findall(text):
+        entry = f"{name} = {value!r}"
+        if entry not in literals:
+            literals.append(entry)
+    parts: list[str] = []
+    if failures:
+        parts.append("[failing tests] " + ", ".join(failures[:4]))
+    if statement:
+        parts.append("[failing statement] " + statement[:200])
+    if raised:
+        parts.append("[last error] " + raised[-1].strip())
+    if literals:
+        parts.append("[string values in the failing frame] " + ", ".join(literals[:4]))
+    return "\n".join(parts)[:max_chars]
+
+
+def _collapse_whitespace(content: str) -> tuple[str, list[int]]:
+    """Collapse whitespace runs to a single space, keeping each character's source offset."""
+
+    collapsed: list[str] = []
+    offsets: list[int] = []
+    after_whitespace = False
+    for index, character in enumerate(content):
+        if character.isspace():
+            after_whitespace = True
+            continue
+        if collapsed and after_whitespace:
+            collapsed.append(" ")
+            offsets.append(index - 1)
+        collapsed.append(character)
+        offsets.append(index)
+        after_whitespace = False
+    return "".join(collapsed), offsets
+
+
+def replace_text_mismatch_message(content: str, old: str) -> str:
+    """Explain a failed `replace_text` match, naming the text that would have matched.
+
+    Weak policies rebuild `old` from search output, which prints one matching line at a
+    time, so a value that spans a line break never matches the file and the policy retypes
+    it until the step budget runs out. Returning the offending region's exact text turns
+    that dead end into a one-step repair.
+    """
+
+    occurrences = content.count(old)
+    if occurrences > 1:
+        lines = [content.count("\n", 0, index) + 1 for index in _occurrences(content, old)]
+        listed = ", ".join(str(line) for line in lines[:8])
+        return (
+            f"replace_text requires exactly one match, found {occurrences}: lines {listed}. "
+            "Include more surrounding context, such as a whole line or two, so that `old` "
+            "matches exactly once."
+        )
+    collapsed_content, offsets = _collapse_whitespace(content)
+    collapsed_old = " ".join(old.split())
+    if collapsed_old:
+        index = collapsed_content.find(collapsed_old)
+        if index >= 0 and collapsed_content.find(collapsed_old, index + 1) < 0:
+            start = offsets[index]
+            end = offsets[index + len(collapsed_old) - 1] + 1
+            first_line = content.count("\n", 0, start) + 1
+            last_line = content.count("\n", 0, end) + 1
+            exact = content[start:end]
+            shown = exact if len(exact) <= 300 else f"{exact[:300]}..."
+            return (
+                "replace_text requires exactly one match, found 0. The same text appears at "
+                f"lines {first_line}-{last_line} with different whitespace, so `old` has to "
+                f"repeat the file byte for byte: {shown!r}. Use exactly that value, or "
+                f"replace_lines start_line={first_line} end_line={last_line}."
+            )
+    return (
+        "replace_text requires exactly one match, found 0. Search results print one matching "
+        "line at a time, so a value joined from two result lines never matches the file. Read "
+        "the file and copy `old` from the numbered read_file output, or use replace_lines on "
+        "the range that read shows."
+    )
+
+
+def premature_finish_refusal(patched: bool, verifier_result: TestResult | None) -> str | None:
+    """Explain why `finish` cannot end the episode yet, or return None to allow it.
+
+    A policy that has not applied a source edit cannot have fixed a failing verifier, so
+    `finish` at that point is a give-up. Accepting it ends the episode with a zero reward and
+    hides how far the policy actually got, which is the signal a weak policy has to be measured
+    on. Callers pass the verifier result they want the refusal to quote: the fresh run for a
+    patched attempt, and the still-valid failure for an unrepaired one. A verifier timeout is
+    allowed through, exactly as `run_tests` terminates on it, because another attempt cannot
+    change the outcome.
+    """
+
+    if patched or verifier_result is None or verifier_result.passed or verifier_result.timed_out:
+        return None
+    return (
+        "finish refused: the verifier still fails and no source file has been edited. Read the "
+        "failing assertion above, find the implementation it calls, and change that file with "
+        "replace_text or replace_lines, then run the tests again. Do not finish while the "
+        "verifier fails."
+    )
+
+
 class ActionLoopGuard:
     """Reject unproductive repeated tool calls as recoverable observations.
 
@@ -302,8 +587,12 @@ class ActionLoopGuard:
     message, and later ones add the state the policy is failing to track.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        is_read_only: Callable[[str], bool] = is_test_path,
+    ) -> None:
         self._records: list[tuple[AgentAction, str]] = []
+        self._is_read_only = is_read_only
         self.rejection_count = 0
         self.consecutive_rejections = 0
 
@@ -368,23 +657,36 @@ class ActionLoopGuard:
         if not self.patched:
             parts.append("No patch has been applied yet.")
         read_files: list[str] = []
+        editable_files: list[str] = []
         queries: list[str] = []
         for previous, _ in self._records:
             if previous.kind is ActionKind.READ_FILE:
                 path = previous.arguments.get("path")
                 if isinstance(path, str) and path not in read_files:
                     read_files.append(path)
+                    if not self._is_read_only(path):
+                        editable_files.append(path)
             elif previous.kind is ActionKind.SEARCH_TEXT:
                 query = previous.arguments.get("query")
                 if isinstance(query, str) and query not in queries:
                     queries.append(query)
-        if read_files:
-            parts.append("Files already read: " + ", ".join(read_files[:5]) + ".")
+        if editable_files:
+            parts.append(
+                "Implementation files already read: " + ", ".join(editable_files[:5]) + "."
+            )
+        elif read_files:
+            parts.append(
+                "Only verifier-owned tests have been read: "
+                + ", ".join(read_files[:5])
+                + ". The edit belongs in the implementation module those tests import, not "
+                "in the test file."
+            )
         if queries:
             parts.append("Queries already used: " + "; ".join(queries[:5]) + ".")
         parts.append(
-            "Do not issue it again. Either edit a file you already read with replace_lines "
-            "on a small range, or call finish."
+            "Do not issue it again. Read the implementation module the tests import and edit "
+            "it with replace_lines on a small range; finish is refused while no source edit "
+            "has been applied."
         )
         return " ".join(parts)
 
@@ -492,15 +794,20 @@ class LocalFixtureEnvironment:
                 )
             elif action.kind is ActionKind.REPLACE_TEXT:
                 path = self._resolve_repository_path(action.arguments.get("path"))
+                relative = path.relative_to(repository).as_posix()
                 old = self._required_string(action.arguments, "old")
                 new = self._required_string(action.arguments, "new", allow_empty=True)
                 content = path.read_text(encoding="utf-8")
                 occurrences = content.count(old)
                 if occurrences != 1:
-                    raise ToolError(f"replace_text requires exactly one match, found {occurrences}")
-                path.write_text(content.replace(old, new, 1), encoding="utf-8")
-                self._read_files.discard(path.relative_to(repository).as_posix())
-                result = StepResult(f"Updated {path.relative_to(repository)}.", False)
+                    raise ToolError(replace_text_mismatch_message(content, old))
+                updated = content.replace(old, new, 1)
+                unparseable = python_edit_syntax_error(relative, updated)
+                if unparseable is not None:
+                    raise ToolError(unparseable)
+                path.write_text(updated, encoding="utf-8")
+                self._read_files.discard(relative)
+                result = StepResult(f"Updated {relative}.", False)
             elif action.kind is ActionKind.REPLACE_LINES:
                 path = self._resolve_repository_path(action.arguments.get("path"))
                 relative = path.relative_to(repository).as_posix()
@@ -514,6 +821,9 @@ class LocalFixtureEnvironment:
                     end_line=action.arguments.get("end_line"),
                     new=new,
                 )
+                unparseable = python_edit_syntax_error(relative, updated)
+                if unparseable is not None:
+                    raise ToolError(unparseable)
                 path.write_text(updated, encoding="utf-8")
                 self._read_files.discard(relative)
                 result = StepResult(f"Updated {relative}.", False)
@@ -522,9 +832,26 @@ class LocalFixtureEnvironment:
                 self.last_test_result = result
                 result = StepResult(self._test_observation(result), result.passed, result)
             elif action.kind is ActionKind.FINISH:
-                result = self.verifier.run(repository, task.test_command)
-                self.last_test_result = result
-                result = StepResult(self._test_observation(result), True, result)
+                # `finish` re-runs the verifier, so a finish with no edit behind it can be
+                # refused with the failure the policy needs instead of ending the episode.
+                # An unrepaired failure stays valid evidence, so it is reused rather than
+                # paid for twice.
+                verified = self.last_test_result
+                if verified is None or verified.passed or self._action_loop_guard.patched:
+                    verified = self.verifier.run(repository, task.test_command)
+                    self.last_test_result = verified
+                refusal = premature_finish_refusal(
+                    self._action_loop_guard.patched,
+                    verified,
+                )
+                if refusal is not None:
+                    result = StepResult(
+                        f"Tool error: {refusal}\n{self._test_observation(verified)}",
+                        False,
+                        verified,
+                    )
+                else:
+                    result = StepResult(self._test_observation(verified), True, verified)
             else:
                 raise EnvironmentError(f"unsupported action: {action.kind.value}")
         except (ToolError, OSError, UnicodeError) as exc:
@@ -647,5 +974,8 @@ class LocalFixtureEnvironment:
     @staticmethod
     def _test_observation(result: TestResult) -> str:
         status = "passed" if result.passed else "failed"
-        detail = result.stderr or result.stdout
-        return f"Tests {status} (exit={result.exit_code}).\n{detail[-4000:]}"
+        summary = failure_summary(result)
+        detail = verifier_output_detail(result)
+        if summary:
+            return f"Tests {status} (exit={result.exit_code}).\n{summary}\n{detail}"
+        return f"Tests {status} (exit={result.exit_code}).\n{detail}"

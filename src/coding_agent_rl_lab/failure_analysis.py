@@ -52,6 +52,7 @@ _LOOP_MARKERS = (
     "do not repeat a search_text query",
     "do not repeat list_files",
     "do not reread an unchanged file",
+    "finish refused",
 )
 _EDIT_KINDS = {ActionKind.REPLACE_TEXT, ActionKind.REPLACE_LINES}
 

@@ -14,7 +14,12 @@ from .environment import (
     EnvironmentError,
     ToolError,
     action_violation_code,
+    failure_summary,
+    is_test_path,
+    premature_finish_refusal,
+    python_edit_syntax_error,
     read_line_range,
+    verifier_output_detail,
 )
 
 
@@ -264,16 +269,22 @@ print('\\n'.join(rendered))
     _SEARCH_TEXT_SCRIPT = """
 from pathlib import Path
 import difflib
+import re
 import sys
 
 TOTAL_LIMIT = 100
 PER_FILE_LIMIT = 5
 FALLBACK_LIMIT = 20
+CANDIDATE_LIMIT = 6
 MAX_CHARS = 8000
 DOCUMENTATION_DIRECTORIES = {'docs', 'doc', 'examples', 'example'}
 DOCUMENTATION_NAMES = (
     'changelog', 'implementation_coverage', 'contributing', 'readme',
     'notice', 'license', 'authors', 'news',
+)
+IMPORT_STATEMENT = re.compile(
+    r'^[ \\t]*(?:from[ \\t]+([A-Za-z_][\\w.]*)[ \\t]+import|import[ \\t]+([A-Za-z_][\\w.]*))',
+    re.MULTILINE,
 )
 
 
@@ -327,7 +338,46 @@ def collect(query, files, per_file_limit):
             if matched_in_file >= per_file_limit:
                 break
     ranked.sort(key=lambda item: item[:4])
-    return [item[4] for item in ranked]
+    return [(item[0], item[2], item[4]) for item in ranked]
+
+
+def imported_modules(text, available):
+    resolved = []
+    for match in IMPORT_STATEMENT.finditer(text):
+        module = match.group(1) or match.group(2)
+        if not module:
+            continue
+        relative = module.replace('.', '/')
+        for candidate in (f'{relative}.py', f'{relative}/__init__.py'):
+            if candidate in available and candidate not in resolved:
+                resolved.append(candidate)
+                break
+    return sorted(resolved, key=lambda path: (-path.count('/'), path.endswith('/__init__.py')))
+
+
+def candidate_lines(matches, files):
+    matched_files = []
+    for rank, relative, _ in matches:
+        if rank == 0:
+            return []
+        if relative not in matched_files:
+            matched_files.append(relative)
+    if not matched_files:
+        return []
+    available = set(files)
+    sources = []
+    for relative in matched_files[:3]:
+        try:
+            sources.append(Path(relative).read_text(encoding='utf-8'))
+        except (OSError, UnicodeError):
+            continue
+    resolved = []
+    for source in sources:
+        for path in imported_modules(source, available):
+            if path not in resolved:
+                resolved.append(path)
+    ranked = sorted(resolved, key=lambda path: (-path.count('/'), path.endswith('/__init__.py')))
+    return [f'IMPLEMENTATION_CANDIDATE:{path}' for path in ranked[:CANDIDATE_LIMIT]]
 
 
 def bounded(lines, max_chars):
@@ -350,7 +400,9 @@ query = sys.argv[1]
 files = listing()
 matches = collect(query, files, PER_FILE_LIMIT)
 if matches:
-    output = bounded(matches[:TOTAL_LIMIT], MAX_CHARS)
+    shown = matches[:TOTAL_LIMIT]
+    output = bounded([line for _, _, line in shown], MAX_CHARS)
+    output.extend(candidate_lines(shown, files))
 else:
     output = [f'No exact matches for: {query}']
     tokens = sorted({token for token in query.split() if len(token) >= 4}, key=len, reverse=True)
@@ -358,7 +410,9 @@ else:
         token_matches = collect(token, files, PER_FILE_LIMIT)
         if token_matches:
             output.append(f'Longest token in the query: {token}')
-            output.extend(bounded(token_matches[:FALLBACK_LIMIT], MAX_CHARS))
+            shown = token_matches[:FALLBACK_LIMIT]
+            output.extend(bounded([line for _, _, line in shown], MAX_CHARS))
+            output.extend(candidate_lines(shown, files))
             break
     else:
         candidates = {name.casefold(): name for name in files}
@@ -367,13 +421,93 @@ else:
     output = bounded(output, MAX_CHARS)
 print('\\n'.join(output))
 """.strip()
-    _REPLACE_TEXT_SCRIPT = (
-        "from pathlib import Path; import sys; "
-        "p=Path(sys.argv[1]); old=sys.argv[2]; new=sys.argv[3]; "
-        "s=p.read_text(encoding='utf-8'); n=s.count(old); "
-        "assert n == 1, f'replace_text requires exactly one match, found {n}'; "
-        "p.write_text(s.replace(old,new,1), encoding='utf-8')"
+    _REPLACE_TEXT_SCRIPT = """
+from pathlib import Path
+import sys
+
+
+def collapse_whitespace(content):
+    collapsed = []
+    offsets = []
+    after_whitespace = False
+    for index, character in enumerate(content):
+        if character.isspace():
+            after_whitespace = True
+            continue
+        if collapsed and after_whitespace:
+            collapsed.append(' ')
+            offsets.append(index - 1)
+        collapsed.append(character)
+        offsets.append(index)
+        after_whitespace = False
+    return ''.join(collapsed), offsets
+
+
+def occurrences(content, old):
+    positions = []
+    start = content.find(old)
+    while start >= 0:
+        positions.append(start)
+        start = content.find(old, start + 1)
+    return positions
+
+
+def mismatch_message(content, old):
+    found = content.count(old)
+    if found > 1:
+        lines = [content.count('\\n', 0, index) + 1 for index in occurrences(content, old)]
+        listed = ', '.join(str(line) for line in lines[:8])
+        return (
+            f'replace_text requires exactly one match, found {found}: lines {listed}. '
+            'Include more surrounding context, such as a whole line or two, so that `old` '
+            'matches exactly once.'
+        )
+    collapsed_content, offsets = collapse_whitespace(content)
+    collapsed_old = ' '.join(old.split())
+    if collapsed_old:
+        index = collapsed_content.find(collapsed_old)
+        if index >= 0 and collapsed_content.find(collapsed_old, index + 1) < 0:
+            start = offsets[index]
+            end = offsets[index + len(collapsed_old) - 1] + 1
+            first_line = content.count('\\n', 0, start) + 1
+            last_line = content.count('\\n', 0, end) + 1
+            exact = content[start:end]
+            shown = exact if len(exact) <= 300 else exact[:300] + '...'
+            return (
+                'replace_text requires exactly one match, found 0. The same text appears at '
+                f'lines {first_line}-{last_line} with different whitespace, so `old` has to '
+                f'repeat the file byte for byte: {shown!r}. Use exactly that value, or '
+                f'replace_lines start_line={first_line} end_line={last_line}.'
+            )
+    return (
+        'replace_text requires exactly one match, found 0. Search results print one matching '
+        'line at a time, so a value joined from two result lines never matches the file. Read '
+        'the file and copy `old` from the numbered read_file output, or use replace_lines on '
+        'the range that read shows.'
     )
+
+
+path = Path(sys.argv[1])
+old = sys.argv[2]
+new = sys.argv[3]
+content = path.read_text(encoding='utf-8')
+if content.count(old) != 1:
+    print(mismatch_message(content, old), file=sys.stderr)
+    raise SystemExit(1)
+updated = content.replace(old, new, 1)
+if path.suffix == '.py':
+    try:
+        compile(updated, str(path), 'exec')
+    except SyntaxError as exc:
+        print(
+            f'edit not applied: it would leave {path} unparseable '
+            f'({type(exc).__name__}: {exc.msg} at line {exc.lineno}). Replace the whole '
+            'statement, including its indentation, in one edit.',
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+path.write_text(updated, encoding='utf-8')
+""".strip()
     _REPLACE_LINES_SCRIPT = """
 from pathlib import Path
 import sys
@@ -389,7 +523,19 @@ if end_line > len(lines):
 selected = ''.join(lines[start_line - 1:end_line])
 if new and selected.endswith('\\n') and not new.endswith(('\\n', '\\r')):
     new += '\\n'
-path.write_text(''.join(lines[:start_line - 1]) + new + ''.join(lines[end_line:]), encoding='utf-8')
+updated = ''.join(lines[:start_line - 1]) + new + ''.join(lines[end_line:])
+if path.suffix == '.py':
+    try:
+        compile(updated, str(path), 'exec')
+    except SyntaxError as exc:
+        print(
+            f'edit not applied: it would leave {path} unparseable '
+            f'({type(exc).__name__}: {exc.msg} at line {exc.lineno}). Replace the whole '
+            'statement, including its indentation, in one edit.',
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+path.write_text(updated, encoding='utf-8')
 """.strip()
     _PATCH_VALID_SCRIPT = """
 from pathlib import Path
@@ -418,7 +564,9 @@ for raw in sys.argv[1:]:
         self._changed_files: set[str] = set()
         self._protected_files: set[str] = set()
         self._read_files: set[str] = set()
-        self._action_loop_guard = ActionLoopGuard()
+        self._action_loop_guard = ActionLoopGuard(
+            lambda path: path in self._protected_files or is_test_path(path)
+        )
 
     def reset(self, task: CodingTask) -> str:
         self.close()
@@ -570,9 +718,26 @@ for raw in sys.argv[1:]:
                     result,
                 )
             elif action.kind is ActionKind.FINISH:
-                result = self._run_tests()
-                self.last_test_result = result
-                step_result = StepResult(self._test_observation(result), True, result)
+                # `finish` re-runs the verifier, so a finish with no edit behind it can be
+                # refused with the failure the policy needs instead of ending the episode.
+                # An unrepaired failure stays valid evidence, so it is reused rather than
+                # paid for twice.
+                verified = self.last_test_result
+                if verified is None or verified.passed or self._action_loop_guard.patched:
+                    verified = self._run_tests()
+                    self.last_test_result = verified
+                refusal = premature_finish_refusal(
+                    self._action_loop_guard.patched,
+                    verified,
+                )
+                if refusal is not None:
+                    step_result = StepResult(
+                        f"Tool error: {refusal}\n{self._test_observation(verified)}",
+                        False,
+                        verified,
+                    )
+                else:
+                    step_result = StepResult(self._test_observation(verified), True, verified)
             else:
                 raise EnvironmentError(f"unsupported action: {action.kind.value}")
         except (ToolError, UnicodeError) as exc:
@@ -721,8 +886,11 @@ for raw in sys.argv[1:]:
     @staticmethod
     def _test_observation(result: TestResult) -> str:
         status = "passed" if result.passed else "failed"
-        detail = result.stderr or result.stdout
-        return f"Tests {status} (exit={result.exit_code}).\n{detail[-4000:]}"
+        summary = failure_summary(result)
+        detail = verifier_output_detail(result)
+        if summary:
+            return f"Tests {status} (exit={result.exit_code}).\n{summary}\n{detail}"
+        return f"Tests {status} (exit={result.exit_code}).\n{detail}"
 
 
 def _container_name(task_id: str) -> str:

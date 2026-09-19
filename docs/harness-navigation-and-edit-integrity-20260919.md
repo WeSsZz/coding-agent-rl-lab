@@ -295,6 +295,73 @@ moto/moto_api/_internal/urls.py:11:    "{0}/moto-api/data.json": response_instan
 ...
 ```
 
+### The paired refusal arm
+
+Item 17 wanted the two effects separated, because the `v24` refusal changes the prompt by one
+sentence and at temperature `0.8` that is enough to move the first sampled action. This arm
+changes nothing but `premature_finish_refusal`: `armA` is a copy of the current tree with the
+function reverted to the `v23` form (a patched failure may finish immediately) and `armB` is the
+current tree. Both run the held-out task `getmoto__moto-7393` with `--repetitions 8 --seed 140001
+--temperature 0.8 --max-steps 24 --context-window-tokens 32768` on the same live engine instance.
+Raw rows: `remote-artifacts/swe-gym-ab-finish-v23-held-out-14b-32k-t08-trajectories.jsonl`
+(`armA`) and `remote-artifacts/swe-gym-ab-finish-v24-held-out-14b-32k-t08-trajectories.jsonl`
+(`armB`), written on the VM as `work/swe-gym-ab-finish-v23-trajectories.jsonl` and
+`work/swe-gym-ab-finish-v24-trajectories.jsonl`; refusals are `finish` actions whose observation
+is a `Tool error`.
+
+| seed | v23 steps | v23 edited | v23 refusals | v23 loops | v24 steps | v24 edited | v24 refusals | v24 loops |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `140001` | 10 | `responses.py` | 0 | 1 | 24 | `config.py`, `responses.py` | 4 | 5 |
+| `150001` | 8 | `urls.py` | 0 | 0 | 24 | `urls.py` | 5 | 6 |
+| `160001` | 12 | `config.py` | 1 | 3 | 24 | `models.py` | 6 | 2 |
+| `170001` | 24 | - | 5 | 7 | 24 | - | 5 | 7 |
+| `180001` | 19 | `config.py` | 2 | 4 | 6 | `config.py` | 0 | 0 |
+| `190001` | 13 | `responses.py` | 0 | 0 | 23 | `responses.py` | 1 | 1 |
+| `200001` | 9 | `config.py` | 0 | 1 | 24 | `config.py`, `urls.py` | 1 | 3 |
+| `210001` | 24 | - | 6 | 13 | 24 | - | 6 | 12 |
+| **total** | **119** | **6 trials** | **14** | **29** | **173** | **6 trials** | **28** | **36** |
+
+Six of eight `v23` trials stop with the error unrepaired at step 10, 8, 12, 19, 13 and 9 of 24;
+two `v24` trials do, at 6 and 23. Six trials in each arm still reach a source edit, and the
+refusal is answered every time with another action rather than with a repeat, so per step the
+loop rate is flat (`0.24` against `0.21`). No trial in either arm passes the verifier, so the
+refusal buys attempts and not success - and it does buy attempts: the two `v24` trials that edit
+a second file (seed `140001` and `200001`) have no counterpart in `v23`, and the `v24` arm runs
+14 pytest verifications against 7.
+
+The reports, part of the same two files, put that in numbers: `pass_at_1` and `mean_scalar_reward`
+are `0.0` in both arms because a strict success never happened, while the shaped
+`mean_training_reward` that training would actually see improves from `-0.235` to `-0.1062` and
+the violation count falls from 2 to 1.
+
+Where the attempts go is the same in both arms, and the gold patch of this task shows why none
+of them can pass. The accepted fix is three edits - a `"{0}/moto-api/config"` entry in
+`moto/moto_api/_internal/urls.py`, a `config` handler on `MotoAPIResponse`, and
+`get_config`/`set_config` on `MotoAPIBackend` reading and writing
+`moto.core.config.default_user_config` - and every arm reads at least one of those three files.
+What it applies instead:
+
+- `moto/core/config.py`, the default value, in three trials of each arm (`160001`, `180001`,
+  `200001` under `v23`, `140001`, `180001`, `200001` under `v24`). The assertion the test opens
+  with is made true by shipping the value the test expects, not by serving the endpoint, and the
+  routes that would make the rest of the test pass are never added. This is the shortcut a
+  reward-shaped policy finds first.
+- The route table in three trials (`150001` both arms, `200001` under `v24`), which under `v23`
+  reaches a handler that does not exist: `AttributeError: 'MotoAPIResponse' object has no
+  attribute 'config'` is what ends that trial.
+- `MotoAPIResponse` itself in four trials, at line 120 (`v24` `190001`) or 199-207 (`190001` in
+  both arms), which is far from the route table that would have to name it.
+- `moto/moto_api/_internal/models.py` in one trial, six times (`v24` `160001`) - the third file of
+  the gold patch - without the route that would call it.
+
+Two trials per arm (`170001`, `210001`) spend the budget on edits that are refused and end with
+no changed file at all. Three of the sixteen trials end on the same shortcut taken one step
+further: `v23` `160001` and `200001` and `v24` `180001` replace the verifier-owned
+`tests/test_core/test_config.py`, which is the one edit the harness terminates on. `v24` does not
+remove that temptation, it only puts the default-value edit in front of it - `160001` and
+`200001` reach the test file at steps 12 and 9 with nothing else changed, `180001` at step 6
+after editing the default value first.
+
 ## Validation
 
 - Windows: `python -m pytest tests -q` -> 257 passed, 1 skipped.
@@ -333,12 +400,12 @@ schemas are unchanged, so older artifacts still load.
 
 ## Next
 
-- Settle the `v24` finish refusal against the `v23` one on a single variable: the held-out task,
-  eight repetitions, same prompt, with `premature_finish_refusal` reverted in one of the two
-  trees. The held-out arm showed the refusal producing a second edit; the development sweep
-  showed it producing probes instead. Both are single-repetition samples of a temperature-0.8
-  policy, and the earlier sweep tables cannot separate the two effects because a one-sentence
-  prompt change moves the first sampled action.
+- Keep the `v24` refusal. The paired arm above shows it buying the work it was meant to buy - 2 of
+  8 trials stop before the budget against 6 of 8, with the same 6 of 8 reaching a source edit, 28
+  refusals answered by another action instead of a repeat, and a flat loop rate per step - and
+  shows that it cannot buy `pass_at_1` on this task, because the remaining gap is *where* the
+  policy edits. The two shapes that gap takes are the default value in `moto/core/config.py` (6 of
+  the 16 trials) and the verifier-owned test file (3 of 16, and the only terminating violation).
 - `getmoto__moto-7646` and `getmoto__moto-7608` have now failed to edit under `v22`, `v23` and
   `v24` - 14 and 11 loop refusals in the last one. Read their refusal directives next: the
   directive already names the files the results pointed at and the policy never opened, so if
@@ -346,7 +413,10 @@ schemas are unchanged, so older artifacts still load.
   directive carries.
 - Re-run the 7B arm, whose `v15` failure was a degenerate repeated search, against the current
   prompt.
-- Rebuild the SFT dataset on the GPU host so its `prompt_version` matches the current prompt.
-- Train on these trajectories: every arm now reaches a source edit or a diagnosable refusal, so
-  the stored rollouts carry the target-selection and repair signal that the prompt alone did not
-  supply.
+- Train on the `v24` warm start and then on these trajectories. The dataset is rebuilt at
+  `prompt_version=coding-tools-json-v24` (204 examples, 51 per stage, one oversized hunk skipped)
+  and the published-shard fallback means it rebuilds on a machine whose network cannot reach the
+  rows API, which is both machines here. Every arm now reaches a source edit or a diagnosable
+  refusal, so the stored rollouts carry the target-selection and repair signal that the prompt
+  alone did not supply; a warm start that has seen the shape of a route-and-handler fix is the
+  cheapest test of the bullet above.

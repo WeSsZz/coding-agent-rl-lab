@@ -108,6 +108,27 @@ class SourceSnapshotTests(unittest.TestCase):
         self.assertEqual(verified.returncode, 0, verified.stdout)
         self.assertIn("verified files=3", verified.stdout)
 
+    def test_create_writes_a_manifest_any_sha256sum_can_read(self) -> None:
+        """The machine that receives the bundle may check it with `sha256sum -c`, not with this tool.
+
+        Python's text mode turns `\\n` into `\\r\\n` on Windows, and a checker is free to keep the
+        carriage return as part of the file name - the one on the model host reported all 147
+        entries as missing. The manifest is written as line feeds so that it is byte for byte what
+        `sha256sum` prints itself.
+        """
+
+        with TemporaryDirectory() as directory:
+            repository = Path(directory)
+            _commit_repository(repository)
+            bundle = repository / "snapshot.tar"
+            self.create(repository, bundle, *REQUIRED)
+
+            raw = Path(f"{bundle}.manifest.txt").read_bytes()
+
+        self.assertNotIn(b"\r", raw)
+        self.assertTrue(raw.endswith(b"\n"))
+        self.assertEqual(len(raw.split(b"\n")), 4)
+
     def test_verify_accepts_an_unpacked_tree(self) -> None:
         with TemporaryDirectory() as directory:
             repository = Path(directory, "repository")

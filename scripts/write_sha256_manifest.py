@@ -23,7 +23,10 @@ def main() -> None:
         with path.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         lines.append(f"{digest}  {path.relative_to(root).as_posix()}")
-    output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # Line feeds only: text mode writes `\r\n` on Windows, and a checker that keeps the carriage
+    # return reports every listed file as missing.
+    output.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     print(f"files={len(lines)} output={output}")
 
 

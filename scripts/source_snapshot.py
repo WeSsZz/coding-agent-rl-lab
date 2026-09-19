@@ -146,7 +146,11 @@ def create(arguments: argparse.Namespace) -> int:
     if absent:
         raise SystemExit(f"the snapshot is incomplete, missing: {', '.join(absent)}")
     bundle.write_bytes(archive)
-    manifest.write_text(_manifest_text(members), encoding="utf-8")
+
+    # Text mode writes `\r\n` for `\n` on Windows, and a checksum checker is free to keep the
+    # carriage return as part of the file name - the one on the training host reported every
+    # listed file as missing. The manifest is written exactly as `sha256sum` would print it.
+    manifest.write_text(_manifest_text(members), encoding="utf-8", newline="\n")
     print(f"rev={short} files={len(members)} bundle={bundle}")
     print(f"manifest={manifest}")
     return 0

@@ -103,6 +103,7 @@ class RolloutCollector:
                 tool_calls=environment.tool_calls,
                 steps=len(steps),
                 violations=violations,
+                loop_rejections=environment.loop_rejections,
             )
             return Trajectory(
                 trajectory_id=f"traj-{uuid.uuid4().hex}",

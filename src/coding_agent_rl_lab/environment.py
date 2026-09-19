@@ -4,8 +4,25 @@ import difflib
 import hashlib
 import shutil
 import tempfile
-from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from pathlib import Path, PurePosixPath
+from typing import Any, Protocol, Sequence, runtime_checkable
+
+READ_FILE_DEFAULT_LINES = 200
+READ_FILE_MAX_CHARS = 8_000
+SEARCH_TOTAL_LIMIT = 100
+SEARCH_PER_FILE_LIMIT = 5
+SEARCH_FALLBACK_LIMIT = 20
+_DOCUMENTATION_DIRECTORIES = frozenset({"docs", "doc", "examples", "example"})
+_DOCUMENTATION_NAMES = (
+    "changelog",
+    "implementation_coverage",
+    "contributing",
+    "readme",
+    "notice",
+    "license",
+    "authors",
+    "news",
+)
 
 from .contracts import ActionKind, AgentAction, CodingTask, StepResult, TestResult
 from .verifier import LocalPythonVerifier
@@ -60,11 +77,189 @@ def read_line_range(arguments: dict[str, Any]) -> tuple[int, int] | None:
     return start_line, end_line
 
 
-def select_line_range(content: str, line_range: tuple[int, int] | None) -> str:
+def render_numbered_window(
+    content: str,
+    line_range: tuple[int, int] | None = None,
+    *,
+    max_lines: int = READ_FILE_DEFAULT_LINES,
+    max_chars: int = READ_FILE_MAX_CHARS,
+) -> str:
+    """Render a line-numbered, self-describing window over one file.
+
+    Line numbers are what let a policy derive `replace_text` and `replace_lines`
+    arguments from an observation, and the closing footer is what stops a truncated
+    read from looking like the whole file.
+    """
+
+    lines = content.splitlines()
+    total = len(lines)
+    if total == 0:
+        return "[file is empty]"
     if line_range is None:
-        return content
-    start_line, end_line = line_range
-    return "".join(content.splitlines(keepends=True)[start_line - 1 : end_line])
+        first, last = 1, min(total, max_lines)
+    else:
+        first, last = max(1, line_range[0]), min(total, line_range[1])
+    if last < first:
+        return f"[no lines in range: the file has {total} lines]"
+    rendered: list[str] = []
+    used_chars = 0
+    shown_last = first - 1
+    for number in range(first, last + 1):
+        line = f"{number}: {lines[number - 1]}"
+        if rendered and used_chars + len(line) + 1 > max_chars:
+            break
+        rendered.append(line)
+        used_chars += len(line) + 1
+        shown_last = number
+    if shown_last >= total:
+        return "\n".join(rendered)
+    notes = ["character budget reached"] if shown_last < last else []
+    notes.append(f"file has {total} lines")
+    notes.append(
+        "continue with read_file start_line="
+        f"{shown_last + 1} end_line={min(total, shown_last + READ_FILE_DEFAULT_LINES)}"
+    )
+    return "\n".join((*rendered, f"[read_file lines {first}-{shown_last}: {'; '.join(notes)}]"))
+
+
+def search_location_rank(parts: Sequence[str]) -> int:
+    """Rank implementation files ahead of tests and prose; lower is better."""
+
+    if any(part in _DOCUMENTATION_DIRECTORIES for part in parts):
+        return 2
+    name = parts[-1] if parts else ""
+    if name.endswith((".md", ".rst", ".txt")) or name.startswith(_DOCUMENTATION_NAMES):
+        return 2
+    if any(part == "tests" or part.startswith("test") for part in parts):
+        return 1
+    return 0
+
+
+def repository_file_listing(repository: Path) -> tuple[str, ...]:
+    """Deterministic, workspace-relative listing of searchable repository files."""
+
+    return tuple(
+        sorted(
+            path.relative_to(repository).as_posix()
+            for path in repository.rglob("*")
+            if path.is_file()
+            and not any(
+                part in {".git", "__pycache__", ".pytest_cache"} or part.endswith(".egg-info")
+                for part in path.relative_to(repository).parts
+            )
+        )
+    )
+
+
+def _collect_search_matches(
+    repository: Path,
+    query: str,
+    *,
+    listing: Sequence[str],
+    per_file_limit: int,
+) -> list[str]:
+    folded = query.casefold()
+    ranked: list[tuple[int, int, str, int, str]] = []
+    for relative in listing:
+        parts = tuple(part.casefold() for part in PurePosixPath(relative).parts)
+        rank = search_location_rank(parts)
+        if folded in relative.casefold():
+            ranked.append((rank, 0, relative, 0, f"PATH_MATCH:{relative}"))
+        path = repository / relative
+        try:
+            if path.stat().st_size > 1_000_000:
+                continue
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError):
+            continue
+        matched_in_file = 0
+        for number, line in enumerate(lines, start=1):
+            if folded not in line.casefold():
+                continue
+            ranked.append((rank, 1, relative, number, f"{relative}:{number}:{line[:300]}"))
+            matched_in_file += 1
+            if matched_in_file >= per_file_limit:
+                break
+    ranked.sort(key=lambda item: item[:4])
+    return [item[4] for item in ranked]
+
+
+def search_repository(
+    repository: Path,
+    query: str,
+    *,
+    total_limit: int = SEARCH_TOTAL_LIMIT,
+    per_file_limit: int = SEARCH_PER_FILE_LIMIT,
+    fallback_limit: int = SEARCH_FALLBACK_LIMIT,
+    max_chars: int = READ_FILE_MAX_CHARS,
+) -> str:
+    """Return a ranked, per-file-capped literal search with one token fallback.
+
+    An issue-derived sentence almost never matches source text, and an uncapped match
+    list lets one large file consume the entire result budget, so a failed query is
+    retried with its longest token instead of spending another agent step on nothing.
+    The result is trimmed to `max_chars` from the top so the highest-ranked matches
+    survive the prompt budget instead of the tail the model happens to receive.
+    """
+
+    listing = repository_file_listing(repository)
+    matches = _collect_search_matches(
+        repository,
+        query,
+        listing=listing,
+        per_file_limit=per_file_limit,
+    )
+    if matches:
+        return "\n".join(
+            _bounded_search_lines(matches[:total_limit], max_chars=max_chars)
+        )
+    rendered = [f"No exact matches for: {query}"]
+    tokens = sorted(
+        {token for token in query.split() if len(token) >= 4},
+        key=len,
+        reverse=True,
+    )
+    for token in tokens[:1]:
+        token_matches = _collect_search_matches(
+            repository,
+            token,
+            listing=listing,
+            per_file_limit=per_file_limit,
+        )
+        if token_matches:
+            rendered.append(f"Longest token in the query: {token}")
+            rendered.extend(
+                _bounded_search_lines(
+                    token_matches[:fallback_limit],
+                    max_chars=max_chars,
+                )
+            )
+            break
+    else:
+        candidates = {path.casefold(): path for path in listing}
+        rendered.extend(
+            f"SUGGESTED_PATH:{candidates[item]}"
+            for item in difflib.get_close_matches(query.casefold(), candidates, n=8, cutoff=0.45)
+        )
+    return "\n".join(_bounded_search_lines(rendered, max_chars=max_chars))
+
+
+def _bounded_search_lines(lines: Sequence[str], *, max_chars: int) -> list[str]:
+    """Keep the best-ranked whole match lines, and say so when the budget cut them."""
+
+    rendered: list[str] = []
+    used_chars = 0
+    for line in lines:
+        if rendered and used_chars + len(line) + 1 > max_chars:
+            break
+        rendered.append(line)
+        used_chars += len(line) + 1
+    if len(rendered) < len(lines):
+        rendered.append(
+            f"[search_text: showing {len(rendered)} of {len(lines)} matches; "
+            "narrow the query or read the first file]"
+        )
+    return rendered
 
 
 def replace_line_range(
@@ -100,15 +295,43 @@ def replace_line_range(
 
 
 class ActionLoopGuard:
-    """Reject unproductive repeated tool calls as recoverable observations."""
+    """Reject unproductive repeated tool calls as recoverable observations.
+
+    A weak policy often answers a rejection by repeating itself and then burns the whole
+    step budget on refusals. Rejections therefore escalate: the first one is the plain
+    message, and later ones add the state the policy is failing to track.
+    """
 
     def __init__(self) -> None:
         self._records: list[tuple[AgentAction, str]] = []
+        self.rejection_count = 0
+        self.consecutive_rejections = 0
 
     def reset(self) -> None:
         self._records = []
+        self.rejection_count = 0
+        self.consecutive_rejections = 0
+
+    @property
+    def patched(self) -> bool:
+        return any(observation.startswith("Updated ") for _, observation in self._records)
 
     def rejection_for(self, action: AgentAction) -> str | None:
+        base = self._base_rejection(action)
+        if base is None:
+            return None
+        self.rejection_count += 1
+        self.consecutive_rejections += 1
+        if self.consecutive_rejections == 1:
+            return base
+        return f"{base}. {self._recovery_directive()}"
+
+    def record(self, action: AgentAction, observation: str) -> None:
+        if not observation.startswith("Tool error:"):
+            self.consecutive_rejections = 0
+        self._records.append((action, observation))
+
+    def _base_rejection(self, action: AgentAction) -> str | None:
         if self._records:
             previous_action, previous_observation = self._records[-1]
             if previous_action == action and previous_observation.startswith("Tool error:"):
@@ -140,8 +363,30 @@ class ActionLoopGuard:
                     return "do not reread an unchanged file; use search_text or inspect another file"
         return None
 
-    def record(self, action: AgentAction, observation: str) -> None:
-        self._records.append((action, observation))
+    def _recovery_directive(self) -> str:
+        parts = [f"Repeated rejection {self.consecutive_rejections} times in a row."]
+        if not self.patched:
+            parts.append("No patch has been applied yet.")
+        read_files: list[str] = []
+        queries: list[str] = []
+        for previous, _ in self._records:
+            if previous.kind is ActionKind.READ_FILE:
+                path = previous.arguments.get("path")
+                if isinstance(path, str) and path not in read_files:
+                    read_files.append(path)
+            elif previous.kind is ActionKind.SEARCH_TEXT:
+                query = previous.arguments.get("query")
+                if isinstance(query, str) and query not in queries:
+                    queries.append(query)
+        if read_files:
+            parts.append("Files already read: " + ", ".join(read_files[:5]) + ".")
+        if queries:
+            parts.append("Queries already used: " + "; ".join(queries[:5]) + ".")
+        parts.append(
+            "Do not issue it again. Either edit a file you already read with replace_lines "
+            "on a small range, or call finish."
+        )
+        return " ".join(parts)
 
 
 @runtime_checkable
@@ -163,6 +408,9 @@ class CodingEnvironment(Protocol):
     def patch_is_valid(self) -> bool: ...
 
     def graded_targets(self) -> tuple[tuple[str, ...], tuple[str, ...]]: ...
+
+    @property
+    def loop_rejections(self) -> int: ...
 
     def close(self) -> None: ...
 
@@ -233,53 +481,15 @@ class LocalFixtureEnvironment:
                 query = self._required_string(action.arguments, "query")
                 if len(query) > 200:
                     raise ToolError("search_text query must be at most 200 characters")
-                matches: list[str] = []
-                repository_paths: list[str] = []
-                query_folded = query.casefold()
-                for path in repository.rglob("*"):
-                    if not path.is_file() or any(
-                        part in {".git", "__pycache__", ".pytest_cache"}
-                        or part.endswith(".egg-info")
-                        for part in path.parts
-                    ):
-                        continue
-                    relative = path.relative_to(repository).as_posix()
-                    repository_paths.append(relative)
-                    if query_folded in relative.casefold():
-                        matches.append(f"PATH_MATCH:{relative}")
-                    if path.stat().st_size > 1_000_000:
-                        continue
-                    try:
-                        lines = path.read_text(encoding="utf-8").splitlines()
-                    except (OSError, UnicodeError):
-                        continue
-                    for line_number, line in enumerate(lines, start=1):
-                        if query_folded in line.casefold():
-                            matches.append(f"{relative}:{line_number}:{line[:300]}")
-                            if len(matches) >= 100:
-                                break
-                    if len(matches) >= 100:
-                        break
-                if matches:
-                    observation = "\n".join(matches)
-                else:
-                    candidates = {relative.casefold(): relative for relative in repository_paths}
-                    suggestions = difflib.get_close_matches(
-                        query_folded,
-                        candidates,
-                        n=8,
-                        cutoff=0.45,
-                    )
-                    rendered = [f"No exact matches for: {query}"]
-                    rendered.extend(f"SUGGESTED_PATH:{candidates[item]}" for item in suggestions)
-                    observation = "\n".join(rendered)
-                result = StepResult(observation, False)
+                result = StepResult(search_repository(repository, query), False)
             elif action.kind is ActionKind.READ_FILE:
                 path = self._resolve_repository_path(action.arguments.get("path"))
                 content = path.read_text(encoding="utf-8")
-                content = select_line_range(content, read_line_range(action.arguments))
                 self._read_files.add(path.relative_to(repository).as_posix())
-                result = StepResult(content[:20_000], False)
+                result = StepResult(
+                    render_numbered_window(content, read_line_range(action.arguments)),
+                    False,
+                )
             elif action.kind is ActionKind.REPLACE_TEXT:
                 path = self._resolve_repository_path(action.arguments.get("path"))
                 old = self._required_string(action.arguments, "old")
@@ -360,6 +570,12 @@ class LocalFixtureEnvironment:
         """Fixtures grade whatever their own trusted test command covers."""
 
         return (), ()
+
+    @property
+    def loop_rejections(self) -> int:
+        """Count of policy actions the loop guard refused as unproductive repeats."""
+
+        return self._action_loop_guard.rejection_count
 
     def close(self) -> None:
         if self.workspace is not None and self.workspace.exists():

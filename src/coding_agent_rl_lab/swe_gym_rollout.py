@@ -64,7 +64,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--max-tokens", type=int, default=1024)
-    parser.add_argument("--max-steps", type=int, default=12)
+    parser.add_argument(
+        "--max-steps",
+        type=_positive_int,
+        default=24,
+        help="Tool-step budget per trial; a patch needs reading, editing, and repair time",
+    )
+    parser.add_argument(
+        "--context-window-tokens",
+        type=_positive_int,
+        default=None,
+        help=(
+            "Served --max-model-len; refuse an oversized prompt before sending it "
+            "instead of recording an HTTP 400 as a policy failure"
+        ),
+    )
     parser.add_argument("--test-timeout-seconds", type=_positive_float, default=900.0)
     parser.add_argument("--rows-cache", default="work/swe-gym-development-rows.jsonl")
     parser.add_argument("--output", default="work/swe-gym-model-report.json")
@@ -208,6 +222,7 @@ def main() -> None:
             api_base=args.api_base,
             temperature=args.temperature,
             max_tokens=args.max_tokens,
+            context_window_tokens=args.context_window_tokens,
         )
     )
     collector = RolloutCollector(provider)

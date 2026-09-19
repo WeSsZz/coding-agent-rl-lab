@@ -102,6 +102,19 @@ class DockerIntegrationTests(unittest.TestCase):
                 self.assertIn("Tests failed", observation)
                 self.assertFalse(environment.baseline_result.passed)
 
+                read = environment.step(
+                    AgentAction(ActionKind.READ_FILE, {"path": "bug.py"})
+                )
+                self.assertEqual(
+                    read.observation.splitlines(),
+                    ["1: def is_fixed():", "2:     return False"],
+                )
+                searched = environment.step(
+                    AgentAction(ActionKind.SEARCH_TEXT, {"query": "is_fixed"})
+                )
+                self.assertTrue(searched.observation.splitlines()[0].startswith("bug.py:"))
+                self.assertIn("tests/test_bug.py:", searched.observation)
+
                 changed = environment.step(
                     AgentAction(
                         ActionKind.REPLACE_TEXT,

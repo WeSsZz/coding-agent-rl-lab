@@ -82,6 +82,10 @@ class _ScriptedEnvironment:
     def graded_targets(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
         return FAIL_TO_PASS, PASS_TO_PASS
 
+    @property
+    def loop_rejections(self) -> int:
+        return 0
+
     def close(self) -> None:
         self.closed = True
 

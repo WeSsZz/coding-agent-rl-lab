@@ -19,7 +19,12 @@ from .contracts import (
 )
 
 
-PROMPT_VERSION = "coding-tools-json-v14"
+PROMPT_VERSION = "coding-tools-json-v15"
+
+#: Conservative characters-per-token used by the context preflight. Real code prompts
+#: tokenize denser than prose, so dividing by three refuses a request slightly before the
+#: server would rather than discovering the overflow as an HTTP 400 mid-episode.
+PROMPT_CHARS_PER_TOKEN = 3
 
 
 class ModelTransportError(RuntimeError):
@@ -122,6 +127,13 @@ def build_action_messages(
     )
 
 
+def estimate_prompt_tokens(messages: Sequence[Mapping[str, str]]) -> int:
+    """Estimate prompt size without the model tokenizer, erring on the high side."""
+
+    characters = sum(len(str(message.get("content", ""))) for message in messages)
+    return -(-characters // PROMPT_CHARS_PER_TOKEN)
+
+
 @dataclass(frozen=True)
 class OpenAICompatiblePolicyConfig:
     model: str
@@ -134,6 +146,7 @@ class OpenAICompatiblePolicyConfig:
     max_attempts: int = 2
     max_observation_chars: int = 8000
     max_history_chars: int = 8000
+    context_window_tokens: int | None = None
 
     def __post_init__(self) -> None:
         if not self.model.strip():
@@ -156,6 +169,11 @@ class OpenAICompatiblePolicyConfig:
             raise ValueError("token, attempt, observation, and history limits must be positive")
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
+        if (
+            self.context_window_tokens is not None
+            and self.context_window_tokens <= self.max_tokens
+        ):
+            raise ValueError("context_window_tokens must exceed max_tokens")
 
     @property
     def chat_completions_url(self) -> str:
@@ -189,6 +207,7 @@ class OpenAICompatiblePolicy:
                 "max_tokens": config.max_tokens,
                 "max_observation_chars": config.max_observation_chars,
                 "max_history_chars": config.max_history_chars,
+                "context_window_tokens": config.context_window_tokens,
                 "response_format": "json_object",
             },
         )
@@ -202,6 +221,26 @@ class OpenAICompatiblePolicy:
         initial_observation: str = "",
     ) -> PolicyDecision:
         messages = self._messages(task, history, initial_observation)
+        prompt_tokens = estimate_prompt_tokens(messages)
+        context_window = self.config.context_window_tokens
+        if context_window is not None and prompt_tokens + self.config.max_tokens > context_window:
+            return PolicyDecision(
+                action=AgentAction(ActionKind.FINISH),
+                input_messages=messages,
+                metadata={
+                    "attempts": 0,
+                    "errors": [
+                        "prompt exceeds the served context window: "
+                        f"~{prompt_tokens} prompt tokens plus max_tokens "
+                        f"{self.config.max_tokens} is more than {context_window}; "
+                        "raise the server --max-model-len or lower "
+                        "max_observation_chars/max_history_chars"
+                    ],
+                    "seed": seed,
+                    "prompt_token_estimate": prompt_tokens,
+                },
+                violation="policy_transport_error",
+            )
         errors: list[str] = []
         output_text: str | None = None
         violation = "policy_protocol_error"
@@ -227,6 +266,7 @@ class OpenAICompatiblePolicy:
                         "attempt": attempt,
                         "latency_ms": latency_ms,
                         "seed": seed,
+                        "prompt_token_estimate": prompt_tokens,
                     },
                 )
             except ModelTransportError as exc:
@@ -418,17 +458,19 @@ Rules:
 - If the file list is truncated or the target is unclear, call search_text or run_tests.
 - Use the initial verifier failure to locate the failing behavior; do not ignore its test path and assertion.
 - Search exact identifiers or literals from the failure and source code, not vague natural-language phrases.
-- Search results rank implementation files ahead of tests and documentation. After reading a test, search for implementation-facing class, method, field, or error names from its calls and assertions; do not search for the test name or test decorators.
+- Search results rank implementation files ahead of tests and documentation, cap matches per file, and stop at 100 matches. If a query has no exact hit, it is retried once with the longest token in it, labelled `Longest token in the query: <token>`; use that evidence instead of repeating the phrase. After reading a test, search for implementation-facing class, method, field, or error names from its calls and assertions; do not search for the test name or test decorators.
 - Search output uses PATH_MATCH:<path> for filename matches, SUGGESTED_PATH:<path> for close paths, and <path>:<line>:<text> only for content matches. Never treat a PATH_MATCH or SUGGESTED_PATH as a line number.
+- read_file returns numbered lines as `<line number>: <text>`. Copy those numbers exactly into replace_lines start_line/end_line; never re-count lines yourself.
+- read_file shows at most 200 lines and 8000 characters. A truncated or ranged read ends with `[read_file lines A-B: ...]`; continue from the start_line it names instead of guessing.
 - For a large implementation file, use ranged read_file only around a content-match line. For a path-only result, read the file without a range or search for an exact identifier inside it.
 - If there are no exact matches, inspect a relevant SUGGESTED_PATH or search for an exact identifier from the verifier failure; do not repeat or guess the obsolete path.
 - Never guess a path that was not present in an observation or search result.
 - Never repeat a search_text query that already returned a result.
 - Once search_text or read_file has located relevant files, do not call list_files.
 - Do not repeat list_files or reread an unchanged file; move from tests to implementation, or from implementation evidence to an edit.
-- After a repeated-action tool error, switch to reading a new implementation file or editing the best-supported source location; do not issue another variation of the same unproductive search.
+- A refused repeat is reported as `Tool error: ...`, never makes progress, and consumes a whole step. After one refusal, switch to a different tool or target; after two, edit a file you already read or call finish instead of issuing another variation of the same unproductive search.
 - Read a file before editing it and make the smallest relevant change. Keep replace_text old/new context compact (normally under 20 lines each) so the JSON response is not truncated. If exact matching fails, use replace_lines only on a small line range from the latest read of that file.
-- Preserve at least four tool steps for editing and verification. In a 12-step episode, normally make the first evidence-backed source edit no later than step 8 instead of spending the full budget exploring.
+- Budget the episode: reserve at least a third of the remaining steps for editing, running tests, and repairing the patch. Make the first evidence-backed source edit as soon as enough context is available instead of exploring until the budget runs out.
 - Never modify tests or verifier-owned files.
 - Run tests after editing. If they fail, treat the new traceback as the highest-priority evidence: read a 20+ line source range around its referenced implementation line, repair the patch within two tool steps, and run tests again. Do not return to broad searches.
 - Finish only when further tool use is unnecessary.

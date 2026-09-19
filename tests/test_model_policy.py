@@ -87,8 +87,11 @@ class OpenAICompatiblePolicyTests(unittest.TestCase):
         self.assertNotIn("PRIVATE-TEST-PATCH", recorded_prompt)
         self.assertNotIn("secret-token", json.dumps(policy.manifest.metadata))
         self.assertIn("test_decimal", recorded_prompt)
-        self.assertEqual(policy.manifest.metadata["prompt_version"], "coding-tools-json-v14")
-        self.assertIn("Preserve at least four tool steps", decision.input_messages[0]["content"])
+        self.assertEqual(policy.manifest.metadata["prompt_version"], "coding-tools-json-v15")
+        self.assertIn(
+            "reserve at least a third of the remaining steps",
+            decision.input_messages[0]["content"],
+        )
 
         url, payload, headers, timeout = transport.calls[0]
         self.assertEqual(url, "http://127.0.0.1:8000/v1/chat/completions")
@@ -321,6 +324,58 @@ class OpenAICompatiblePolicyTests(unittest.TestCase):
         self.assertEqual(decision.action.kind, ActionKind.FINISH)
         self.assertEqual(decision.violation, "policy_transport_error")
         self.assertEqual(decision.metadata["errors"], ["offline"])
+
+    def test_oversized_prompt_is_refused_before_the_request_is_sent(self) -> None:
+        transport = FakeTransport([_response('{"kind":"finish","arguments":{}}')])
+        policy = OpenAICompatiblePolicy(
+            OpenAICompatiblePolicyConfig(
+                model="example/coder",
+                max_attempts=2,
+                max_tokens=1024,
+                max_observation_chars=30_000,
+                context_window_tokens=8192,
+            ),
+            transport=transport,
+        )
+
+        decision = policy.next_action(
+            _task(),
+            (),
+            seed=21,
+            initial_observation="x" * 30_000,
+        )
+
+        self.assertEqual(decision.action.kind, ActionKind.FINISH)
+        self.assertEqual(decision.violation, "policy_transport_error")
+        self.assertEqual(decision.metadata["attempts"], 0)
+        self.assertIn("--max-model-len", decision.metadata["errors"][0])
+        self.assertEqual(transport.calls, [])
+
+    def test_context_window_preflight_passes_a_prompt_that_fits(self) -> None:
+        transport = FakeTransport([_response('{"kind":"finish","arguments":{}}')])
+        policy = OpenAICompatiblePolicy(
+            OpenAICompatiblePolicyConfig(
+                model="example/coder",
+                max_observation_chars=30_000,
+                context_window_tokens=32_768,
+            ),
+            transport=transport,
+        )
+
+        decision = policy.next_action(_task(), (), seed=22, initial_observation="x" * 30_000)
+
+        self.assertEqual(decision.action.kind, ActionKind.FINISH)
+        self.assertIsNone(decision.violation)
+        self.assertEqual(len(transport.calls), 1)
+        self.assertGreater(decision.metadata["prompt_token_estimate"], 10_000)
+
+    def test_context_window_must_exceed_max_tokens(self) -> None:
+        with self.assertRaisesRegex(ValueError, "context_window_tokens"):
+            OpenAICompatiblePolicyConfig(
+                model="example/coder",
+                max_tokens=1024,
+                context_window_tokens=1024,
+            )
 
     def test_history_observations_share_a_total_budget_and_keep_recent_content(self) -> None:
         history = tuple(

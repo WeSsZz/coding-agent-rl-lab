@@ -224,62 +224,148 @@ class DockerSandboxEnvironment:
 from pathlib import Path
 import sys
 
-content = Path(sys.argv[1]).read_text(encoding='utf-8')
+MAX_LINES = 200
+MAX_CHARS = 8000
+
+lines = Path(sys.argv[1]).read_text(encoding='utf-8').splitlines()
+total = len(lines)
+if total == 0:
+    print('[file is empty]')
+    raise SystemExit(0)
 if len(sys.argv) == 4:
-    start_line = int(sys.argv[2])
-    end_line = int(sys.argv[3])
-    content = ''.join(content.splitlines(keepends=True)[start_line - 1:end_line])
-print(content, end='')
+    first = max(1, int(sys.argv[2]))
+    last = min(total, int(sys.argv[3]))
+else:
+    first = 1
+    last = min(total, MAX_LINES)
+if last < first:
+    print(f'[no lines in range: the file has {total} lines]')
+    raise SystemExit(0)
+rendered = []
+used_chars = 0
+shown_last = first - 1
+for number in range(first, last + 1):
+    line = f'{number}: {lines[number - 1]}'
+    if rendered and used_chars + len(line) + 1 > MAX_CHARS:
+        break
+    rendered.append(line)
+    used_chars += len(line) + 1
+    shown_last = number
+if shown_last < total:
+    notes = ['character budget reached'] if shown_last < last else []
+    notes.append(f'file has {total} lines')
+    notes.append(
+        'continue with read_file start_line='
+        f'{shown_last + 1} end_line={min(total, shown_last + MAX_LINES)}'
+    )
+    rendered.append(f'[read_file lines {first}-{shown_last}: ' + '; '.join(notes) + ']')
+print('\\n'.join(rendered))
 """.strip()
     _SEARCH_TEXT_SCRIPT = """
 from pathlib import Path
 import difflib
 import sys
 
-query = sys.argv[1].casefold()
-matches = []
-repository_paths = []
-for path in Path('.').rglob('*'):
-    if not path.is_file() or any(
-        part in {'.git', '__pycache__', '.pytest_cache'} or part.endswith('.egg-info')
-        for part in path.parts
-    ):
-        continue
-    relative = path.as_posix()
-    repository_paths.append(relative)
-    parts = {part.casefold() for part in path.parts}
-    if parts & {'docs', 'doc', 'examples', 'example'}:
-        location_rank = 2
-    elif any(part == 'tests' or part.startswith('test') for part in parts):
-        location_rank = 1
-    else:
-        location_rank = 0
-    if query in relative.casefold():
-        matches.append((location_rank, 0, relative, 0, f'PATH_MATCH:{relative}'))
-    try:
-        too_large = path.stat().st_size > 1_000_000
-    except OSError:
-        continue
-    if too_large:
-        continue
-    try:
-        lines = path.read_text(encoding='utf-8').splitlines()
-    except (OSError, UnicodeError):
-        continue
-    for line_number, line in enumerate(lines, start=1):
-        if query in line.casefold():
-            rendered = f'{relative}:{line_number}:{line[:300]}'
-            matches.append((location_rank, 1, relative, line_number, rendered))
-matches.sort(key=lambda item: item[:4])
-rendered_matches = [item[4] for item in matches[:100]]
-if rendered_matches:
-    print('\\n'.join(rendered_matches))
+TOTAL_LIMIT = 100
+PER_FILE_LIMIT = 5
+FALLBACK_LIMIT = 20
+MAX_CHARS = 8000
+DOCUMENTATION_DIRECTORIES = {'docs', 'doc', 'examples', 'example'}
+DOCUMENTATION_NAMES = (
+    'changelog', 'implementation_coverage', 'contributing', 'readme',
+    'notice', 'license', 'authors', 'news',
+)
+
+
+def location_rank(parts):
+    if any(part in DOCUMENTATION_DIRECTORIES for part in parts):
+        return 2
+    name = parts[-1] if parts else ''
+    if name.endswith(('.md', '.rst', '.txt')) or name.startswith(DOCUMENTATION_NAMES):
+        return 2
+    if any(part == 'tests' or part.startswith('test') for part in parts):
+        return 1
+    return 0
+
+
+def listing():
+    return tuple(
+        sorted(
+            path.relative_to(Path('.')).as_posix()
+            for path in Path('.').rglob('*')
+            if path.is_file()
+            and not any(
+                part in {'.git', '__pycache__', '.pytest_cache'}
+                or part.endswith('.egg-info')
+                for part in path.relative_to(Path('.')).parts
+            )
+        )
+    )
+
+
+def collect(query, files, per_file_limit):
+    folded = query.casefold()
+    ranked = []
+    for relative in files:
+        parts = tuple(part.casefold() for part in Path(relative).parts)
+        rank = location_rank(parts)
+        if folded in relative.casefold():
+            ranked.append((rank, 0, relative, 0, f'PATH_MATCH:{relative}'))
+        path = Path(relative)
+        try:
+            if path.stat().st_size > 1_000_000:
+                continue
+            lines = path.read_text(encoding='utf-8').splitlines()
+        except (OSError, UnicodeError):
+            continue
+        matched_in_file = 0
+        for number, line in enumerate(lines, start=1):
+            if folded not in line.casefold():
+                continue
+            ranked.append((rank, 1, relative, number, f'{relative}:{number}:{line[:300]}'))
+            matched_in_file += 1
+            if matched_in_file >= per_file_limit:
+                break
+    ranked.sort(key=lambda item: item[:4])
+    return [item[4] for item in ranked]
+
+
+def bounded(lines, max_chars):
+    rendered = []
+    used_chars = 0
+    for line in lines:
+        if rendered and used_chars + len(line) + 1 > max_chars:
+            break
+        rendered.append(line)
+        used_chars += len(line) + 1
+    if len(rendered) < len(lines):
+        rendered.append(
+            f'[search_text: showing {len(rendered)} of {len(lines)} matches; '
+            'narrow the query or read the first file]'
+        )
+    return rendered
+
+
+query = sys.argv[1]
+files = listing()
+matches = collect(query, files, PER_FILE_LIMIT)
+if matches:
+    output = bounded(matches[:TOTAL_LIMIT], MAX_CHARS)
 else:
-    candidates = {relative.casefold(): relative for relative in repository_paths}
-    suggestions = difflib.get_close_matches(query, candidates, n=8, cutoff=0.45)
-    rendered = [f'No exact matches for: {sys.argv[1]}']
-    rendered.extend(f'SUGGESTED_PATH:{candidates[item]}' for item in suggestions)
-    print('\\n'.join(rendered))
+    output = [f'No exact matches for: {query}']
+    tokens = sorted({token for token in query.split() if len(token) >= 4}, key=len, reverse=True)
+    for token in tokens[:1]:
+        token_matches = collect(token, files, PER_FILE_LIMIT)
+        if token_matches:
+            output.append(f'Longest token in the query: {token}')
+            output.extend(bounded(token_matches[:FALLBACK_LIMIT], MAX_CHARS))
+            break
+    else:
+        candidates = {name.casefold(): name for name in files}
+        suggestions = difflib.get_close_matches(query.casefold(), candidates, n=8, cutoff=0.45)
+        output.extend(f'SUGGESTED_PATH:{candidates[item]}' for item in suggestions)
+    output = bounded(output, MAX_CHARS)
+print('\\n'.join(output))
 """.strip()
     _REPLACE_TEXT_SCRIPT = (
         "from pathlib import Path; import sys; "
@@ -406,7 +492,13 @@ for raw in sys.argv[1:]:
                     raise ToolError("search_text query must be at most 200 characters")
                 result = self._exec(("python", "-c", self._SEARCH_TEXT_SCRIPT, query))
                 self._require_command(result, "search_text")
-                step_result = StepResult(result.stdout[-self.config.max_output_chars :], False)
+                step_result = StepResult(
+                    self._bounded_observation(
+                        result.stdout,
+                        note="narrow the search_text query or read the first file",
+                    ),
+                    False,
+                )
             elif action.kind is ActionKind.READ_FILE:
                 path = self._safe_relative_path(action.arguments.get("path"))
                 line_range = read_line_range(action.arguments)
@@ -416,7 +508,13 @@ for raw in sys.argv[1:]:
                 result = self._exec(command)
                 self._require_command(result, "read_file")
                 self._read_files.add(path)
-                step_result = StepResult(result.stdout[-self.config.max_output_chars :], False)
+                step_result = StepResult(
+                    self._bounded_observation(
+                        result.stdout,
+                        note="read a smaller line range to see the rest of the file",
+                    ),
+                    False,
+                )
             elif action.kind is ActionKind.REPLACE_TEXT:
                 path = self._safe_relative_path(action.arguments.get("path"))
                 if path in self._protected_files:
@@ -507,6 +605,12 @@ for raw in sys.argv[1:]:
 
         return self.spec.fail_to_pass, self.spec.pass_to_pass
 
+    @property
+    def loop_rejections(self) -> int:
+        """Count of policy actions the loop guard refused as unproductive repeats."""
+
+        return self._action_loop_guard.rejection_count
+
     def close(self) -> None:
         container_name = self.container_name
         self.container_name = None
@@ -596,9 +700,21 @@ for raw in sys.argv[1:]:
             raise ToolError(f"{action} failed: {result.stderr or result.stdout}")
 
     def _bounded_listing(self, content: str) -> str:
+        return self._bounded_observation(
+            content,
+            note="use search_text or run_tests to locate relevant code",
+        )
+
+    def _bounded_observation(self, content: str, *, note: str) -> str:
+        """Keep the head and tail of an observation, and name why it was cut.
+
+        The head carries the highest-ranked matches and the first numbered lines, and
+        the tail carries `read_file`'s next-step footer, so neither end may be dropped.
+        """
+
         if len(content) <= self.config.max_output_chars:
             return content
-        marker = "\n...[file list truncated; use search_text or run_tests to locate relevant code]...\n"
+        marker = f"\n...[observation truncated; {note}]...\n"
         half = (self.config.max_output_chars - len(marker)) // 2
         return content[:half] + marker + content[-half:]
 

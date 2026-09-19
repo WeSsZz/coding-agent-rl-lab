@@ -6,25 +6,65 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
-from .contracts import Trajectory
+from .contracts import ActionKind, Trajectory
 from .rollout import read_trajectories, write_report
 
 
 FAILURE_CATEGORIES = (
     "success",
+    "infra_error",
     "context_window_exceeded",
     "protected_test_edit",
     "invalid_action",
     "verifier_timeout",
     "policy_transport_error",
     "policy_protocol_error",
+    "loop",
     "patch_failed_verifier",
     "edit_action_failed",
+    "no_edit_attempt",
     "no_patch",
 )
 
+INFRA_ERROR_CATEGORIES = (
+    "infra_error",
+    "context_window_exceeded",
+    "policy_transport_error",
+)
+
+_CONTEXT_MARKERS = ("maximum context length", "context length", "max_tokens")
+_INFRA_MARKERS = (
+    "connection refused",
+    "connection reset",
+    "server disconnected",
+    "temporary failure in name resolution",
+    "timed out",
+    "http 400",
+    "http 404",
+    "http 429",
+    "http 500",
+    "http 502",
+    "http 503",
+)
+_LOOP_MARKERS = (
+    "repeated rejection",
+    "do not repeat the same action",
+    "do not repeat a search_text query",
+    "do not repeat list_files",
+    "do not reread an unchanged file",
+)
+_EDIT_KINDS = {ActionKind.REPLACE_TEXT, ActionKind.REPLACE_LINES}
+
 
 def classify_trajectory(trajectory: Trajectory) -> str:
+    """Attribute one failed trial, separating harness faults from policy faults.
+
+    Context overflow and transport failures say nothing about the policy, so they are
+    classified before any behaviour-based category. `loop` and `no_edit_attempt` split
+    the old `no_patch` catch-all, which used to hide that most weak-policy trials never
+    reached an edit at all.
+    """
+
     if trajectory.reward.task_success:
         return "success"
 
@@ -36,9 +76,13 @@ def classify_trajectory(trajectory: Trajectory) -> str:
     if any(
         marker in error.casefold()
         for error in errors
-        for marker in ("maximum context length", "context length", "max_tokens")
+        for marker in _CONTEXT_MARKERS
     ):
         return "context_window_exceeded"
+    if "policy_transport_error" in trajectory.reward.violations or any(
+        marker in error.casefold() for error in errors for marker in _INFRA_MARKERS
+    ):
+        return "infra_error"
 
     observations = "\n".join(step.observation for step in trajectory.steps).casefold()
     if "cannot modify verifier-owned test file" in observations:
@@ -50,19 +94,38 @@ def classify_trajectory(trajectory: Trajectory) -> str:
         for step in trajectory.steps
     ):
         return "verifier_timeout"
-    if "policy_transport_error" in trajectory.reward.violations:
-        return "policy_transport_error"
     if "policy_protocol_error" in trajectory.reward.violations:
         return "policy_protocol_error"
     if trajectory.reward.patch_created or trajectory.changed_files:
         return "patch_failed_verifier"
-    if any(
-        step.action.kind.value in {"replace_text", "replace_lines"}
-        and step.observation.startswith("Tool error:")
-        for step in trajectory.steps
-    ):
+    edit_attempts = tuple(
+        step for step in trajectory.steps if step.action.kind in _EDIT_KINDS
+    )
+    if any(step.observation.startswith("Tool error:") for step in edit_attempts):
         return "edit_action_failed"
+    if not edit_attempts:
+        if loop_rejection_count(trajectory) >= _loop_threshold(trajectory):
+            return "loop"
+        return "no_edit_attempt"
     return "no_patch"
+
+
+def loop_rejection_count(trajectory: Trajectory) -> int:
+    """Count productive-actions refusals, falling back to observations for old files."""
+
+    observed = sum(
+        1
+        for step in trajectory.steps
+        if step.observation.startswith("Tool error:")
+        and any(marker in step.observation.casefold() for marker in _LOOP_MARKERS)
+    )
+    return max(trajectory.reward.loop_rejections, observed)
+
+
+def _loop_threshold(trajectory: Trajectory) -> int:
+    """A trial is `loop` when a third of its steps were refusals, and at least three."""
+
+    return max(3, (trajectory.reward.steps + 2) // 3)
 
 
 def build_failure_report(trajectories: Iterable[Trajectory]) -> dict[str, Any]:
@@ -92,17 +155,22 @@ def build_failure_report(trajectories: Iterable[Trajectory]) -> dict[str, Any]:
                 "category": category,
                 "steps": trajectory.reward.steps,
                 "tool_calls": trajectory.reward.tool_calls,
+                "loop_rejections": loop_rejection_count(trajectory),
+                "infra_error": category in INFRA_ERROR_CATEGORIES,
                 "changed_file_count": len(trajectory.changed_files),
                 "violations": list(trajectory.reward.violations),
                 **verifier,
             }
         )
+    infra_failures = sum(category_counts[name] for name in INFRA_ERROR_CATEGORIES)
     return {
         "schema_version": 1,
         "report_type": "trajectory_failure_taxonomy",
         "trial_count": len(items),
         "success_count": category_counts["success"],
         "failure_count": len(items) - category_counts["success"],
+        "infra_error_count": infra_failures,
+        "policy_failure_count": len(items) - category_counts["success"] - infra_failures,
         "category_counts": {
             category: category_counts[category]
             for category in FAILURE_CATEGORIES

@@ -82,3 +82,9 @@ After the GPU instance is started, first run `sft_train` without `--train` again
 exact local model snapshot, tokenizer/chat template rendering, dynamic tool JSON schema, token
 lengths without truncation, installed Torch/Transformers/TRL versions, and CUDA visibility. Only a
 successful recorded preflight permits a later command with `--train`.
+
+## Later same-day update
+
+The harness change recorded in `docs/harness-observation-and-failure-taxonomy-20260919.md` moves
+the source prompt to `coding-tools-json-v15`, so the rebuilt v14 SFT files above no longer match
+the source prompt and must be rebuilt again before a preflight that compares prompt text.

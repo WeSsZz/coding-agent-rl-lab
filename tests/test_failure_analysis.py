@@ -70,14 +70,64 @@ def _trajectory(
     )
 
 
+def _looping_trajectory(
+    *,
+    loop_rejections: int,
+    total_steps: int,
+    recorded_rejections: int | None = None,
+) -> Trajectory:
+    """A refusal-dominated trial; `recorded_rejections=None` mirrors older checkpoints."""
+
+    recorded = loop_rejections if recorded_rejections is None else recorded_rejections
+    steps = tuple(
+        TrajectoryStep(
+            sequence=index + 1,
+            action=AgentAction(ActionKind.SEARCH_TEXT, {"query": "waitForTaskToken"}),
+            observation=(
+                "Tool error: do not repeat a search_text query that already returned a result"
+                if index < loop_rejections
+                else "src/client.py:41:waitForTaskToken"
+            ),
+            terminated=False,
+        )
+        for index in range(total_steps)
+    )
+    return Trajectory(
+        trajectory_id="trajectory-loop",
+        task_id="task-1",
+        repetition=1,
+        seed=123,
+        policy=PolicyManifest("policy", "1", "test"),
+        steps=steps,
+        reward=RewardVector(
+            task_success=False,
+            tests_passed=False,
+            regression_free=False,
+            patch_created=False,
+            tool_calls=total_steps,
+            steps=total_steps,
+            loop_rejections=recorded,
+        ),
+        changed_files=(),
+        baseline_tests_passed=False,
+        final_tests_passed=False,
+        initial_observation="baseline failed",
+    )
+
+
 class FailureAnalysisTests(unittest.TestCase):
     def test_context_overflow_is_separated_from_generic_transport_failure(self) -> None:
         trajectory = _trajectory(
             violations=("policy_transport_error",),
             errors=("maximum context length is 8192 tokens",),
         )
+        transport = _trajectory(
+            violations=("policy_transport_error",),
+            errors=("HTTP 400 from the model server",),
+        )
 
         self.assertEqual(classify_trajectory(trajectory), "context_window_exceeded")
+        self.assertEqual(classify_trajectory(transport), "infra_error")
 
     def test_protected_test_edit_and_timeout_have_actionable_categories(self) -> None:
         protected = _trajectory(
@@ -98,7 +148,22 @@ class FailureAnalysisTests(unittest.TestCase):
             classify_trajectory(_trajectory(edit_attempt_failed=True)),
             "edit_action_failed",
         )
-        self.assertEqual(classify_trajectory(_trajectory()), "no_patch")
+        self.assertEqual(classify_trajectory(_trajectory()), "no_edit_attempt")
+
+    def test_repeated_refusals_are_reported_as_a_loop_not_as_no_patch(self) -> None:
+        looping = _looping_trajectory(loop_rejections=6, total_steps=8)
+        exploring = _looping_trajectory(loop_rejections=1, total_steps=8)
+        # Older checkpoints predate `RewardVector.loop_rejections`; the observation
+        # wording has to keep working as the fallback signal.
+        legacy = _looping_trajectory(
+            loop_rejections=8,
+            total_steps=8,
+            recorded_rejections=0,
+        )
+
+        self.assertEqual(classify_trajectory(looping), "loop")
+        self.assertEqual(classify_trajectory(legacy), "loop")
+        self.assertEqual(classify_trajectory(exploring), "no_edit_attempt")
 
     def test_report_contains_counts_without_raw_content(self) -> None:
         report = build_failure_report(
@@ -106,7 +171,12 @@ class FailureAnalysisTests(unittest.TestCase):
         )
 
         self.assertEqual(report["trial_count"], 2)
-        self.assertEqual(report["category_counts"], {"patch_failed_verifier": 1, "no_patch": 1})
+        self.assertEqual(
+            report["category_counts"],
+            {"patch_failed_verifier": 1, "no_edit_attempt": 1},
+        )
+        self.assertEqual(report["infra_error_count"], 0)
+        self.assertEqual(report["policy_failure_count"], 2)
         self.assertFalse(report["contains_raw_model_or_repository_content"])
         self.assertNotIn("observation", report["trajectories"][0])
 

@@ -61,3 +61,11 @@ unknown node attribution instead of fabricated zeros. `git diff --check` is clea
 - The failure classifier still merges "no edit attempted" with "no patch produced"; the
   loop/infrastructure split is separate harness work.
 - The prompt, tool protocol, step budget and observation formatting are untouched.
+
+## Later same-day update
+
+The loop/infrastructure split landed afterwards
+(`docs/harness-observation-and-failure-taxonomy-20260919.md`). The read path above is still
+backward compatible, but the `no_patch 6/6` result quoted in Validation is now reported as
+`loop 6/6`: the same six trials, with the refusal-dominated pattern named instead of hidden in
+the catch-all category.

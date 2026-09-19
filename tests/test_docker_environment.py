@@ -313,7 +313,7 @@ class DockerEnvironmentTests(unittest.TestCase):
         self.assertIn("No exact matches for: moto/dynamodb/models.py", completed.stdout)
         self.assertIn("SUGGESTED_PATH:moto/dynamodb/models/__init__.py", completed.stdout)
 
-    def test_read_file_script_can_select_a_line_range(self) -> None:
+    def test_read_file_script_numbers_a_selected_line_range(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             Path(directory, "example.py").write_text(
                 "one\ntwo\nthree\nfour\n",
@@ -335,7 +335,80 @@ class DockerEnvironmentTests(unittest.TestCase):
             )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stdout, "two\nthree\n")
+        self.assertEqual(
+            completed.stdout,
+            "2: two\n"
+            "3: three\n"
+            "[read_file lines 2-3: file has 4 lines; "
+            "continue with read_file start_line=4 end_line=4]\n",
+        )
+
+    def test_read_file_script_marks_an_empty_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "example.py").write_text("", encoding="utf-8")
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-c",
+                    DockerSandboxEnvironment._READ_FILE_SCRIPT,
+                    "example.py",
+                ),
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, "[file is empty]\n")
+
+    def test_read_file_script_reports_when_the_character_budget_truncates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "example.py").write_text(
+                "\n".join(f"line-{number}-{'x' * 60}" for number in range(1, 201)) + "\n",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-c",
+                    DockerSandboxEnvironment._READ_FILE_SCRIPT,
+                    "example.py",
+                ),
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        lines = completed.stdout.splitlines()
+        self.assertEqual(lines[0], "1: line-1-" + "x" * 60)
+        self.assertIn("[read_file lines 1-", lines[-1])
+        self.assertIn("file has 200 lines", lines[-1])
+        self.assertLess(len(completed.stdout), 8_400)
+
+    def test_search_text_script_caps_matches_per_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "src").mkdir(parents=True)
+            Path(directory, "src", "noisy.py").write_text(
+                "needle\n" * 20,
+                encoding="utf-8",
+            )
+            Path(directory, "src", "other.py").write_text("needle\n", encoding="utf-8")
+            completed = subprocess.run(
+                (sys.executable, "-c", DockerSandboxEnvironment._SEARCH_TEXT_SCRIPT, "needle"),
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        matches = completed.stdout.splitlines()
+        self.assertEqual(len(matches), 6)
+        self.assertEqual(sum(line.startswith("src/noisy.py:") for line in matches), 5)
+        self.assertEqual(sum(line.startswith("src/other.py:") for line in matches), 1)
 
     def test_replace_lines_script_preserves_the_selected_block_newline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

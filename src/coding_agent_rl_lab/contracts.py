@@ -191,6 +191,7 @@ class RewardVector:
     tool_calls: int
     steps: int
     violations: tuple[str, ...] = ()
+    loop_rejections: int = 0
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> RewardVector:
@@ -202,6 +203,7 @@ class RewardVector:
             tool_calls=int(value["tool_calls"]),
             steps=int(value["steps"]),
             violations=tuple(value.get("violations", ())),
+            loop_rejections=int(value.get("loop_rejections", 0)),
         )
 
     @property

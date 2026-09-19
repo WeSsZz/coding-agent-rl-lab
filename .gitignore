@@ -7,7 +7,7 @@ build/
 *.egg-info/
 work/
 remote-artifacts/
-codex-sync*.tar
-run-remote*.ps1
+snapshot-*.tar
+snapshot-*.tar.manifest.txt
 .DS_Store
 

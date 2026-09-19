@@ -226,6 +226,12 @@ PYTHONPATH=src python3 -m coding_agent_rl_lab.swe_gym_sft \
 监督；另有 1 个超过 4096 字符动作上限的 hunk 被审计排除。该数据只能用于 train-only
 warm-start，不能进入 held-out prompt、普通 trajectory 导出或能力报告。
 
+`--download-pinned-train` 与 rollout 的行缓存都优先使用 Hugging Face 的 rows API；当该主机在
+当前网络没有路由时（本项目的 Windows 与 Ubuntu 机器都属于这种情况），第一次失败后改为按
+offset 读取同一份官方 `train-00000-of-00001.parquet`，因此拿到的仍是相同的行，两条路径产出的
+数据集 sha256 一致。分片默认缓存在临时目录，可用 `SWE_GYM_SHARD_CACHE` 指向已有副本；这条
+回退路径需要 `pyarrow`（`python -m pip install pyarrow`）。
+
 SFT 入口默认只执行数据、prompt 版本、assistant JSON、tokenizer 长度和 CUDA preflight。
 它把 conversational 数据转换为 prompt/completion，并只对 completion 计算 loss；任何超过
 `--max-length` 的样本都会导致退出，不会静默截断 gold action：

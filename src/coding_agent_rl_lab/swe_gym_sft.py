@@ -11,7 +11,7 @@ from typing import Any, Iterable
 
 from .contracts import ActionKind, AgentAction, CodingTask, DatasetSplit, TrajectoryStep
 from .model_policy import PROMPT_VERSION, build_action_messages
-from .swe_gym_smoke import _download_pinned_row, pinned_rows_for_task_set
+from .swe_gym_smoke import _download_pinned_rows, pinned_rows_for_task_set
 
 
 class SFTDatasetError(ValueError):
@@ -217,7 +217,7 @@ def main() -> None:
     args = build_parser().parse_args()
     project_root = Path(__file__).resolve().parents[2]
     if args.download_pinned_train:
-        rows = tuple(_download_pinned_row(item) for item in pinned_rows_for_task_set("train"))
+        rows = _download_pinned_rows(pinned_rows_for_task_set("train"))
     else:
         rows = _load_rows(project_root / args.input)
     examples, report = build_train_gold_sft_dataset(rows)

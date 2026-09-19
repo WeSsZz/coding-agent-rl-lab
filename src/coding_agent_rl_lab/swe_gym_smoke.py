@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
+from http.client import HTTPException
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -22,6 +26,21 @@ DATASET_ROWS_URL_TEMPLATE = (
     "https://datasets-server.huggingface.co/rows?dataset=SWE-Gym%2FSWE-Gym"
     "&config=default&split=train&offset={offset}&length=1"
 )
+# One row is a few tens of kilobytes, so a host that has not answered in 20 seconds is not going
+# to answer; every second spent waiting here is a second before the shard fallback starts.
+ROWS_API_TIMEOUT_SECONDS = 20
+
+# The same rows can be read straight out of the published train shard, which is the file the
+# rows API reads. On a network that cannot reach `datasets-server.huggingface.co` the mirror
+# still answers, so a row is never a hard failure as long as one of the two hosts is up.
+TRAIN_SHARD_NAME = "train-00000-of-00001.parquet"
+DATASET_SHARD_URLS = (
+    f"https://huggingface.co/datasets/SWE-Gym/SWE-Gym/resolve/main/data/{TRAIN_SHARD_NAME}",
+    f"https://hf-mirror.com/datasets/SWE-Gym/SWE-Gym/resolve/main/data/{TRAIN_SHARD_NAME}",
+)
+SHARD_CACHE_ENVIRONMENT_VARIABLE = "SWE_GYM_SHARD_CACHE"
+PARQUET_MAGIC = b"PAR1"
+SHARD_TABLES: dict[Path, Any] = {}
 
 
 @dataclass(frozen=True)
@@ -131,8 +150,8 @@ def download_pinned_rows(*, limit: int | None = None) -> tuple[dict[str, Any], .
         raise ValueError(f"limit must be between 1 and {len(PINNED_DEVELOPMENT_ROWS)}")
     selected = PINNED_DEVELOPMENT_ROWS[:limit]
     rows: list[dict[str, Any]] = []
-    for pinned in selected:
-        row = dict(_download_pinned_row(pinned))
+    for downloaded in _download_pinned_rows(selected):
+        row = dict(downloaded)
         row.pop("patch", None)
         row.pop("hints_text", None)
         rows.append(row)
@@ -212,10 +231,9 @@ def load_or_download_pinned_rows(
         if all(item.instance_id in cached_by_id for item in selected):
             return tuple(cached_by_id[item.instance_id] for item in selected)
 
-    for pinned in selected:
-        if pinned.instance_id in cached_by_id:
-            continue
-        row = dict(_download_pinned_row(pinned))
+    missing = tuple(item for item in selected if item.instance_id not in cached_by_id)
+    for pinned, downloaded in zip(missing, _download_pinned_rows(missing)):
+        row = dict(downloaded)
         row.pop("patch", None)
         row.pop("hints_text", None)
         cached_by_id[pinned.instance_id] = row
@@ -241,7 +259,7 @@ def _download_pinned_row(pinned: PinnedSWEGymRow, *, attempts: int = 3) -> dict[
             headers={"User-Agent": "coding-agent-rl-lab/0.1"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=ROWS_API_TIMEOUT_SECONDS) as response:
                 payload = json.load(response)
             break
         except OSError as exc:
@@ -267,6 +285,116 @@ def _validate_pinned_row(row: dict[str, Any], pinned: PinnedSWEGymRow) -> None:
         raise RuntimeError("downloaded row does not match the pinned smoke instance")
     if row.get("repo") != "getmoto/moto" or row.get("version") != "5.0":
         raise RuntimeError("downloaded row is outside the audited getmoto/moto@5.0 environment")
+
+
+def _download_pinned_rows(
+    pinned_rows: Sequence[PinnedSWEGymRow], *, attempts: int = 3
+) -> tuple[dict[str, Any], ...]:
+    """Download pinned rows, reading the published shard once the rows API has failed.
+
+    `datasets-server.huggingface.co` is the documented way to ask for a single row, and on some
+    networks it has no route at all. Retrying it for every row would only repeat the same
+    failure, so the first failure moves the rest of the batch to the shard, which holds the same
+    rows that the API serves.
+    """
+
+    rows: list[dict[str, Any]] = []
+    api_failure: RuntimeError | None = None
+    for pinned in pinned_rows:
+        if api_failure is None:
+            try:
+                rows.append(_download_pinned_row(pinned, attempts=attempts))
+                continue
+            except RuntimeError as exc:
+                api_failure = exc
+        rows.append(_pinned_row_from_shard(pinned, api_failure))
+    return tuple(rows)
+
+
+def _pinned_row_from_shard(
+    pinned: PinnedSWEGymRow, api_failure: RuntimeError
+) -> dict[str, Any]:
+    try:
+        row = _read_shard_row(pinned.offset)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"failed to download pinned SWE-Gym row {pinned.instance_id} from the rows API "
+            f"({api_failure}); the published {TRAIN_SHARD_NAME} did not supply it either: {exc}"
+        ) from exc
+    _validate_pinned_row(row, pinned)
+    return row
+
+
+def shard_cache_path() -> Path:
+    override = os.environ.get(SHARD_CACHE_ENVIRONMENT_VARIABLE)
+    if override:
+        return Path(override)
+    return Path(tempfile.gettempdir()) / TRAIN_SHARD_NAME
+
+
+def _read_shard_row(offset: int) -> dict[str, Any]:
+    try:
+        import pyarrow.parquet as parquet
+    except ImportError as exc:
+        raise RuntimeError(
+            "reading a pinned row out of the published shard needs pyarrow "
+            "(python -m pip install pyarrow); the Hugging Face rows API is the only other source"
+        ) from exc
+    path = shard_cache_path()
+    if not path.is_file() or not _is_parquet_file(path):
+        _download_shard(path)
+    table = SHARD_TABLES.get(path)
+    if table is None:
+        table = parquet.read_table(path)
+        SHARD_TABLES[path] = table
+    if not 0 <= offset < table.num_rows:
+        raise RuntimeError(f"{path} holds {table.num_rows} rows, so offset {offset} is outside it")
+    row = table.slice(offset, 1).to_pylist()[0]
+    if not isinstance(row, dict):
+        raise RuntimeError(f"row {offset} of {path} is not a record")
+    return row
+
+
+def _is_parquet_file(path: Path) -> bool:
+    """A parquet file starts and ends with the magic bytes; a truncated or HTML body does not."""
+
+    with path.open("rb") as handle:
+        handle.seek(0, 2)
+        if handle.tell() < 2 * len(PARQUET_MAGIC):
+            return False
+        handle.seek(0)
+        if handle.read(len(PARQUET_MAGIC)) != PARQUET_MAGIC:
+            return False
+        handle.seek(-len(PARQUET_MAGIC), 2)
+        return handle.read(len(PARQUET_MAGIC)) == PARQUET_MAGIC
+
+
+def _download_shard(destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_name(destination.name + ".partial")
+    failures: list[str] = []
+    for url in DATASET_SHARD_URLS:
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "coding-agent-rl-lab/0.1"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                with partial.open("wb") as handle:
+                    shutil.copyfileobj(response, handle)
+        except (OSError, HTTPException) as exc:
+            # A mirror can close the connection in the middle of the body, and the shard is large
+            # enough for that to be an ordinary event; treat it as one failed attempt.
+            failures.append(f"{url}: {exc}")
+            partial.unlink(missing_ok=True)
+            continue
+        if not _is_parquet_file(partial):
+            failures.append(f"{url}: the response is not a parquet file")
+            partial.unlink(missing_ok=True)
+            continue
+        partial.replace(destination)
+        return
+    raise RuntimeError(f"could not download {TRAIN_SHARD_NAME}: " + "; ".join(failures))
 
 
 if __name__ == "__main__":

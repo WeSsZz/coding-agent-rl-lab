@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from coding_agent_rl_lab import swe_gym_smoke
 from coding_agent_rl_lab.contracts import DatasetSplit
 from coding_agent_rl_lab.swe_gym import (
     SWE_GYM_ENVIRONMENT_REVISION,
@@ -203,6 +206,111 @@ class SWEGymAdapterTests(unittest.TestCase):
                     "tests/test_other.py::test_unrelated",
                 ),
             )
+
+
+def _pinned_row(pinned) -> dict[str, object]:
+    row = _sample_row()
+    row["instance_id"] = pinned.instance_id
+    row["base_commit"] = pinned.base_commit
+    return row
+
+
+class PinnedRowShardFallbackTests(unittest.TestCase):
+    """`datasets-server.huggingface.co` has no route on some networks; the shard is the backup.
+
+    The fallback has to answer with the same rows the rows API would have returned, has to refuse
+    a row that is not the pinned instance, and has to report both failures when neither source
+    works, because an operator only sees the exception text.
+    """
+
+    def test_the_shard_supplies_every_row_after_the_rows_api_fails_once(self) -> None:
+        selected = PINNED_DEVELOPMENT_ROWS[:3]
+        with patch(
+            "coding_agent_rl_lab.swe_gym_smoke._download_pinned_row",
+            side_effect=RuntimeError("rows API is unreachable"),
+        ) as api, patch(
+            "coding_agent_rl_lab.swe_gym_smoke._read_shard_row",
+            side_effect=[_pinned_row(pinned) for pinned in selected],
+        ) as shard:
+            downloaded = swe_gym_smoke._download_pinned_rows(selected)
+
+        self.assertEqual(
+            tuple(row["instance_id"] for row in downloaded),
+            tuple(pinned.instance_id for pinned in selected),
+        )
+        self.assertEqual(api.call_count, 1)
+        self.assertEqual(
+            [call.args[0] for call in shard.call_args_list],
+            [pinned.offset for pinned in selected],
+        )
+
+    def test_a_shard_row_that_is_not_the_pinned_instance_is_refused(self) -> None:
+        with patch(
+            "coding_agent_rl_lab.swe_gym_smoke._download_pinned_row",
+            side_effect=RuntimeError("rows API is unreachable"),
+        ), patch(
+            "coding_agent_rl_lab.swe_gym_smoke._read_shard_row",
+            return_value=_sample_row(),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "does not match the pinned smoke instance"):
+                swe_gym_smoke._download_pinned_rows((PINNED_DEVELOPMENT_ROWS[1],))
+
+    def test_a_shard_failure_still_reports_why_the_rows_api_failed(self) -> None:
+        with patch(
+            "coding_agent_rl_lab.swe_gym_smoke._download_pinned_row",
+            side_effect=RuntimeError("rows API is unreachable"),
+        ), patch(
+            "coding_agent_rl_lab.swe_gym_smoke._read_shard_row",
+            side_effect=RuntimeError("pyarrow is not installed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "pyarrow is not installed") as raised:
+                swe_gym_smoke._download_pinned_rows((PINNED_DEVELOPMENT_ROWS[0],))
+
+        self.assertIn("rows API is unreachable", str(raised.exception))
+        self.assertIn(PINNED_DEVELOPMENT_ROWS[0].instance_id, str(raised.exception))
+
+    def test_the_shard_download_falls_back_to_the_mirror(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "shard.parquet"
+            requested: list[str] = []
+
+            def urlopen(request, timeout):
+                self.assertEqual(timeout, 120)
+                requested.append(request.full_url)
+                if "hf-mirror" not in request.full_url:
+                    raise OSError("no route to host")
+                return io.BytesIO(swe_gym_smoke.PARQUET_MAGIC + b"0" * 16 + swe_gym_smoke.PARQUET_MAGIC)
+
+            with patch("urllib.request.urlopen", side_effect=urlopen):
+                swe_gym_smoke._download_shard(destination)
+
+            self.assertEqual(len(requested), 2)
+            self.assertTrue(requested[1].startswith("https://hf-mirror.com/"))
+            self.assertEqual(destination.stat().st_size, 24)
+
+    def test_a_response_that_is_not_a_parquet_file_is_not_cached(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "shard.parquet"
+            with patch(
+                "urllib.request.urlopen",
+                side_effect=lambda request, timeout: io.BytesIO(b"<html>rate limited</html>"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "not a parquet file"):
+                    swe_gym_smoke._download_shard(destination)
+
+            self.assertFalse(destination.exists())
+            self.assertFalse(destination.with_name(destination.name + ".partial").exists())
+
+    def test_the_shard_cache_can_be_pointed_at_an_existing_copy(self) -> None:
+        with patch.dict(
+            os.environ,
+            {swe_gym_smoke.SHARD_CACHE_ENVIRONMENT_VARIABLE: "somewhere/rows.parquet"},
+        ):
+            self.assertEqual(swe_gym_smoke.shard_cache_path(), Path("somewhere/rows.parquet"))
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(swe_gym_smoke.SHARD_CACHE_ENVIRONMENT_VARIABLE, None)
+            self.assertEqual(swe_gym_smoke.shard_cache_path().name, swe_gym_smoke.TRAIN_SHARD_NAME)
 
 
 if __name__ == "__main__":

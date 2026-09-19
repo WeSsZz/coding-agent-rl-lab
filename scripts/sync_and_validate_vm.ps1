@@ -19,6 +19,10 @@ Also run tests.test_docker_integration against the cached SWE-Gym base image.
 .PARAMETER KeepBundle
 Keep the local tar after the run for debugging; the remote copies are still removed.
 
+.PARAMETER KeepRemote
+Keep the extracted tree and tar on the VM. Use this for a long detached job: the tree
+is the job's working directory, so it must outlive this script.
+
 .PARAMETER RemoteCommand
 Run this shell command inside the extracted tree instead of the unittest suite, so a
 rollout or a diagnostic uses this working copy rather than the VM's older checkout.
@@ -45,6 +49,7 @@ param(
     [string]$DockerBaseImage = "xingyaoww/sweb.eval.x86_64.getmoto_s_moto-7365:latest",
     [switch]$DockerIntegration,
     [switch]$KeepBundle,
+    [switch]$KeepRemote,
     [string]$RemoteCommand = ""
 )
 
@@ -132,8 +137,12 @@ try {
     }
 }
 finally {
-    Write-Host "[cleanup] $remoteRoot"
-    & ssh @sshOptions $target "rm -rf $remoteRoot $remoteBundle" 2>$null | Out-Null
+    if ($KeepRemote) {
+        Write-Host "[cleanup] kept remote tree $remoteRoot"
+    } else {
+        Write-Host "[cleanup] $remoteRoot"
+        & ssh @sshOptions $target "rm -rf $remoteRoot $remoteBundle" 2>$null | Out-Null
+    }
     if ($KeepBundle) {
         Write-Host "kept local bundle: $localBundle"
     } elseif (Test-Path -LiteralPath $localBundle) {

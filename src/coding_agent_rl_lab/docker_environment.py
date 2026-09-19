@@ -474,6 +474,7 @@ print('\\n'.join(output))
 """.strip()
     _REPLACE_TEXT_SCRIPT = """
 from pathlib import Path
+import ast
 import sys
 
 
@@ -540,6 +541,44 @@ def mismatch_message(content, old):
     )
 
 
+def enclosed_statement_span(original, replaced_lines):
+    if replaced_lines is None:
+        return None
+    start_line, end_line = replaced_lines
+    try:
+        module = ast.parse(original)
+    except SyntaxError:
+        return None
+    span = None
+    for node in ast.walk(module):
+        if not isinstance(node, ast.stmt):
+            continue
+        first, last = node.lineno, node.end_lineno
+        if first is None or last is None:
+            continue
+        if (first, last) == (start_line, end_line):
+            return None
+        if first <= start_line and last >= end_line:
+            if span is None or (last - first) < (span[1] - span[0]):
+                span = (first, last)
+    return span
+
+
+def unparseable_message(path, original, replaced_lines, exc):
+    message = (
+        f'edit not applied: it would leave {path} unparseable '
+        f'({type(exc).__name__}: {exc.msg} at line {exc.lineno}). Replace the whole '
+        'statement, including its indentation, in one edit.'
+    )
+    span = enclosed_statement_span(original, replaced_lines)
+    if span is not None:
+        message += (
+            f' The statement you replaced lines {replaced_lines[0]}-{replaced_lines[1]} of '
+            f'spans lines {span[0]}-{span[1]}: give replace_lines that whole range.'
+        )
+    return message
+
+
 path = Path(sys.argv[1])
 old = sys.argv[2]
 new = sys.argv[3]
@@ -552,18 +591,55 @@ if path.suffix == '.py':
     try:
         compile(updated, str(path), 'exec')
     except SyntaxError as exc:
-        print(
-            f'edit not applied: it would leave {path} unparseable '
-            f'({type(exc).__name__}: {exc.msg} at line {exc.lineno}). Replace the whole '
-            'statement, including its indentation, in one edit.',
-            file=sys.stderr,
-        )
+        offset = content.find(old)
+        first = content.count('\\n', 0, offset) + 1
+        print(unparseable_message(path, content, (first, first + old.count('\\n')), exc), file=sys.stderr)
         raise SystemExit(1)
 path.write_text(updated, encoding='utf-8')
 """.strip()
     _REPLACE_LINES_SCRIPT = """
 from pathlib import Path
+import ast
 import sys
+
+
+def enclosed_statement_span(original, replaced_lines):
+    if replaced_lines is None:
+        return None
+    start_line, end_line = replaced_lines
+    try:
+        module = ast.parse(original)
+    except SyntaxError:
+        return None
+    span = None
+    for node in ast.walk(module):
+        if not isinstance(node, ast.stmt):
+            continue
+        first, last = node.lineno, node.end_lineno
+        if first is None or last is None:
+            continue
+        if (first, last) == (start_line, end_line):
+            return None
+        if first <= start_line and last >= end_line:
+            if span is None or (last - first) < (span[1] - span[0]):
+                span = (first, last)
+    return span
+
+
+def unparseable_message(path, original, replaced_lines, exc):
+    message = (
+        f'edit not applied: it would leave {path} unparseable '
+        f'({type(exc).__name__}: {exc.msg} at line {exc.lineno}). Replace the whole '
+        'statement, including its indentation, in one edit.'
+    )
+    span = enclosed_statement_span(original, replaced_lines)
+    if span is not None:
+        message += (
+            f' The statement you replaced lines {replaced_lines[0]}-{replaced_lines[1]} of '
+            f'spans lines {span[0]}-{span[1]}: give replace_lines that whole range.'
+        )
+    return message
+
 
 path = Path(sys.argv[1])
 start_line = int(sys.argv[2])
@@ -582,9 +658,7 @@ if path.suffix == '.py':
         compile(updated, str(path), 'exec')
     except SyntaxError as exc:
         print(
-            f'edit not applied: it would leave {path} unparseable '
-            f'({type(exc).__name__}: {exc.msg} at line {exc.lineno}). Replace the whole '
-            'statement, including its indentation, in one edit.',
+            unparseable_message(path, content, (start_line, end_line), exc),
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -617,6 +691,7 @@ for raw in sys.argv[1:]:
         self._changed_files: set[str] = set()
         self._protected_files: set[str] = set()
         self._read_files: set[str] = set()
+        self._edited_since_verification = False
         self._action_loop_guard = ActionLoopGuard(
             lambda path: path in self._protected_files or is_test_path(path)
         )
@@ -726,6 +801,7 @@ for raw in sys.argv[1:]:
                 self._require_command(result, "replace_text")
                 self._changed_files.add(path)
                 self._read_files.discard(path)
+                self._edited_since_verification = True
                 step_result = StepResult(f"Updated {path}.", False)
             elif action.kind is ActionKind.REPLACE_LINES:
                 path = self._safe_relative_path(action.arguments.get("path"))
@@ -761,10 +837,12 @@ for raw in sys.argv[1:]:
                 self._require_command(result, "replace_lines")
                 self._changed_files.add(path)
                 self._read_files.discard(path)
+                self._edited_since_verification = True
                 step_result = StepResult(f"Updated {path}.", False)
             elif action.kind is ActionKind.RUN_TESTS:
                 result = self._run_tests()
                 self.last_test_result = result
+                self._edited_since_verification = False
                 step_result = StepResult(
                     self._test_observation(result),
                     result.passed or result.timed_out,
@@ -774,14 +852,18 @@ for raw in sys.argv[1:]:
                 # `finish` re-runs the verifier, so a finish with no edit behind it can be
                 # refused with the failure the policy needs instead of ending the episode.
                 # An unrepaired failure stays valid evidence, so it is reused rather than
-                # paid for twice.
+                # paid for twice. A finish that follows an edit is the one case that has to
+                # run: nothing else can change a failure, and a policy that probes with
+                # `finish` between reads otherwise pays for a container run per probe.
                 verified = self.last_test_result
-                if verified is None or verified.passed or self._action_loop_guard.patched:
+                if verified is None or verified.passed or self._edited_since_verification:
                     verified = self._run_tests()
                     self.last_test_result = verified
+                    self._edited_since_verification = False
                 refusal = premature_finish_refusal(
                     self._action_loop_guard.patched,
                     verified,
+                    steps_remaining=task.max_steps - self.steps,
                 )
                 if refusal is not None:
                     step_result = StepResult(
@@ -806,6 +888,7 @@ for raw in sys.argv[1:]:
         self._require_active()
         result = self._run_tests()
         self.last_test_result = result
+        self._edited_since_verification = False
         return result
 
     def changed_files(self) -> tuple[str, ...]:
@@ -844,6 +927,7 @@ for raw in sys.argv[1:]:
         self._changed_files = set()
         self._protected_files = set()
         self._read_files = set()
+        self._edited_since_verification = False
         self._action_loop_guard.reset()
 
     def __enter__(self) -> DockerSandboxEnvironment:

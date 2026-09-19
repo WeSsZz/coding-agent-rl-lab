@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import urllib.request
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -40,6 +41,50 @@ def _positive_float(value: str) -> float:
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be positive")
     return parsed
+
+
+def _read_served_models(url: str, timeout_seconds: float) -> dict:
+    with urllib.request.urlopen(url, timeout=timeout_seconds) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def require_served_model(
+    api_base: str,
+    model: str,
+    *,
+    timeout_seconds: float = 20.0,
+    reader: Callable[[str, float], dict] | None = None,
+) -> str:
+    """Stop before the first trial when the served endpoint cannot answer.
+
+    A tunnel that drops mid-run used to surface one transport violation per step: every `v24`
+    development trial whose endpoint died spent its remaining budget on refusals against the
+    policy's own fallback action, and the arm was only recognisable as invalid afterwards. The
+    same failure in the first second costs one request instead of two hours, and it names the
+    models the endpoint does serve, because a model id that does not match the server is the
+    other half of this failure.
+    """
+
+    url = f"{api_base.rstrip('/')}/models"
+    read = reader or _read_served_models
+    try:
+        payload = read(url, timeout_seconds)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(
+            f"model endpoint {url} is not reachable: {exc}. Start the server (or its tunnel) "
+            "before collecting rollouts."
+        ) from exc
+    served = [
+        entry.get("id")
+        for entry in payload.get("data", ())
+        if isinstance(entry, dict) and entry.get("id")
+    ]
+    if model not in served:
+        raise SystemExit(
+            f"model endpoint {url} serves {served or 'no models'}, not {model}. Pass --model "
+            "with an id the server exposes."
+        )
+    return url
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -99,6 +144,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def policy_failure_detail(trajectory: Trajectory) -> str:
+    """The endpoint errors a failed trial recorded, deduplicated and in order."""
+
+    errors = (
+        str(error)
+        for step in trajectory.steps
+        for error in step.policy_metadata.get("errors", ())
+    )
+    return "; ".join(dict.fromkeys(errors)) or "no error detail recorded"
+
+
 def collect_trajectories_incrementally(
     tasks: Sequence[CodingTask],
     policy: Policy,
@@ -156,6 +212,14 @@ def collect_trajectories_incrementally(
             trajectories_by_key[key] = trajectory
             if on_progress is not None:
                 on_progress(ordered_trajectories(), planned)
+            if "policy_transport_error" in trajectory.reward.violations:
+                # The endpoint stopped answering, so every later trial repeats this failure.
+                # The checkpoint above still holds the trial, and `--resume` can finish the
+                # run once the tunnel is back.
+                raise SystemExit(
+                    f"model endpoint failed during {key[0]} repetition {key[1]}: "
+                    f"{policy_failure_detail(trajectory)}. Trials after it were not run."
+                )
     return ordered_trajectories()
 
 
@@ -185,6 +249,7 @@ def write_rollout_checkpoint(
 
 def main() -> None:
     args = build_parser().parse_args()
+    require_served_model(args.api_base, args.model)
     available = pinned_rows_for_task_set(args.task_set)
     if args.task_id and args.task_count is not None:
         raise SystemExit("--task-id and --task-count cannot be used together")

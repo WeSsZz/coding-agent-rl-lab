@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import difflib
 import hashlib
 import re
@@ -18,6 +19,14 @@ RELATED_QUERY_MATCH_LIMIT = 8
 RELATED_QUERY_FILE_LIMIT = 12
 RELATED_QUERY_MAX_CHARS = 2_400
 _PATH_MATCH_PREFIX = "PATH_MATCH:"
+_EVIDENCE_PATH = re.compile(
+    r"^(?:IMPLEMENTATION_CANDIDATE|SUGGESTED_PATH|PATH_MATCH):(\S+)$",
+    re.MULTILINE,
+)
+_EVIDENCE_MATCH = re.compile(
+    r"^([\w./+-]+\.(?:py|pyi|cfg|ini|json|toml|ya?ml)):\d+:",
+    re.MULTILINE,
+)
 _IMPORT_STATEMENT = re.compile(
     r"^[ \t]*(?:from[ \t]+([A-Za-z_][\w.]*)[ \t]+import|import[ \t]+([A-Za-z_][\w.]*))",
     re.MULTILINE,
@@ -546,7 +555,62 @@ def _occurrences(content: str, old: str) -> list[int]:
     return positions
 
 
-def python_edit_syntax_error(relative_path: str, updated: str) -> str | None:
+def enclosed_statement_span(
+    original: str | None,
+    replaced_lines: tuple[int, int] | None,
+) -> tuple[int, int] | None:
+    """The innermost statement that contains the replaced lines, when it is wider than them.
+
+    A `v21` trial replaced lines 9-14 of a `url_paths` dictionary that runs to line 31, which
+    left an indented block with no opening line and put the syntax error on line 26 - outside
+    the range the policy had replaced, and therefore invisible to it. Naming the span is what
+    turns that refusal into the repair.
+    """
+
+    if original is None or replaced_lines is None:
+        return None
+    start_line, end_line = replaced_lines
+    if not isinstance(start_line, int) or not isinstance(end_line, int):
+        return None
+    try:
+        module = ast.parse(original)
+    except SyntaxError:
+        return None
+    span: tuple[int, int] | None = None
+    for node in ast.walk(module):
+        if not isinstance(node, ast.stmt):
+            continue
+        first, last = node.lineno, node.end_lineno
+        if first is None or last is None:
+            continue
+        if (first, last) == (start_line, end_line):
+            # The range is exactly a statement, so the range is not what is wrong with the
+            # edit: the text it was replaced with is, and pointing at the enclosing block
+            # would send the policy off to rewrite code that was never the problem.
+            return None
+        if first <= start_line and last >= end_line:
+            if span is None or (last - first) < (span[1] - span[0]):
+                span = (first, last)
+    return span
+
+
+def replaced_line_span(content: str, old: str) -> tuple[int, int] | None:
+    """The inclusive range of lines a matched `old` block occupies in `content`."""
+
+    offset = content.find(old)
+    if offset < 0:
+        return None
+    first = content.count("\n", 0, offset) + 1
+    return first, first + old.count("\n")
+
+
+def python_edit_syntax_error(
+    relative_path: str,
+    updated: str,
+    *,
+    original: str | None = None,
+    replaced_lines: tuple[int, int] | None = None,
+) -> str | None:
     """Refuse an edit that would leave an edited Python file unparseable.
 
     A replacement that spans the wrong lines, or that keeps the indentation of the
@@ -561,11 +625,18 @@ def python_edit_syntax_error(relative_path: str, updated: str) -> str | None:
     try:
         compile(updated, relative_path, "exec")
     except SyntaxError as exc:
-        return (
+        message = (
             f"edit not applied: it would leave {relative_path} unparseable "
             f"({type(exc).__name__}: {exc.msg} at line {exc.lineno}). Replace the whole "
             "statement, including its indentation, in one edit."
         )
+        span = enclosed_statement_span(original, replaced_lines)
+        if span is not None:
+            message += (
+                f" The statement you replaced lines {replaced_lines[0]}-{replaced_lines[1]} of "
+                f"spans lines {span[0]}-{span[1]}: give replace_lines that whole range."
+            )
+        return message
     return None
 
 
@@ -756,7 +827,12 @@ def replace_text_mismatch_message(content: str, old: str) -> str:
     )
 
 
-def premature_finish_refusal(patched: bool, verifier_result: TestResult | None) -> str | None:
+def premature_finish_refusal(
+    patched: bool,
+    verifier_result: TestResult | None,
+    *,
+    steps_remaining: int | None = None,
+) -> str | None:
     """Explain why `finish` cannot end the episode yet, or return None to allow it.
 
     A policy that has not applied a source edit cannot have fixed a failing verifier, so
@@ -766,16 +842,67 @@ def premature_finish_refusal(patched: bool, verifier_result: TestResult | None) 
     patched attempt, and the still-valid failure for an unrepaired one. A verifier timeout is
     allowed through, exactly as `run_tests` terminates on it, because another attempt cannot
     change the outcome.
+
+    The same give-up re-appears one step later once the policy can edit: every `v23` held-out
+    trial applied one edit, read the failure the already-refused `finish` had handed it, and
+    called `finish` again at step 7 or 8 of 24 with the error still unrepaired. A patched
+    failure is therefore refused too, while at least two steps remain - two, because a repair
+    costs an edit and the test run that confirms it. With one step left the refusal would only
+    replace the action the policy chose with an observation it has no budget to act on, so the
+    episode is allowed to end - patched or not, because the refusal that lands on the last step
+    ends the episode either way, one observation later. A caller that does not know the
+    remaining budget still refuses, and leaves the count out of the message.
     """
 
-    if patched or verifier_result is None or verifier_result.passed or verifier_result.timed_out:
+    if verifier_result is None or verifier_result.passed or verifier_result.timed_out:
         return None
-    return (
-        "finish refused: the verifier still fails and no source file has been edited. Read the "
-        "failing assertion above, find the implementation it calls, and change that file with "
-        "replace_text or replace_lines, then run the tests again. Do not finish while the "
-        "verifier fails."
+    if steps_remaining is not None and steps_remaining < 2:
+        return None
+    if not patched:
+        return (
+            "finish refused: the verifier still fails and no source file has been edited. Read "
+            "the failing assertion above, find the implementation it calls, and change that "
+            "file with replace_text or replace_lines, then run the tests again. Do not finish "
+            "while the verifier fails."
+        )
+    budget = (
+        f" You have {steps_remaining} tool steps left."
+        if steps_remaining is not None
+        else ""
     )
+    return (
+        "finish refused: a source file has been edited and the verifier still fails, so the "
+        "patch is not finished. The failure above names what is still wrong: read the file it "
+        "names, fix that cause with replace_text or replace_lines, and run the tests again."
+        f"{budget} `finish` is accepted once the verifier passes."
+    )
+
+
+def unread_evidence_paths(
+    observations: Sequence[str],
+    *,
+    read: Sequence[str],
+    is_read_only: Callable[[str], bool],
+    limit: int = 4,
+) -> list[str]:
+    """Implementation files this episode's own results named and the policy never read.
+
+    A policy stalled on refusals is usually holding its next move in an observation it already
+    has: an `IMPLEMENTATION_CANDIDATE` line, or the file of a content match. Repeating those
+    back is the difference between "try something else" and naming what is left to try, which
+    is what the four no-edit episodes of the `v20` development sweep needed.
+    """
+
+    known = set(read)
+    found: list[str] = []
+    for observation in observations:
+        names = list(_EVIDENCE_PATH.findall(observation))
+        names.extend(match.group(1) for match in _EVIDENCE_MATCH.finditer(observation))
+        for name in names:
+            if name in known or name in found or is_read_only(name):
+                continue
+            found.append(name)
+    return found[:limit]
 
 
 class ActionLoopGuard:
@@ -883,6 +1010,17 @@ class ActionLoopGuard:
             )
         if queries:
             parts.append("Queries already used: " + "; ".join(queries[:5]) + ".")
+        unread = unread_evidence_paths(
+            [observation for _, observation in self._records],
+            read=read_files,
+            is_read_only=self._is_read_only,
+        )
+        if unread:
+            parts.append(
+                "Files your own results named and you have not read: "
+                + ", ".join(unread)
+                + ". Read one and make the edit there."
+            )
         parts.append(
             "Do not issue it again. Search for the exact value the failure quotes, read the "
             "file that produces it, and edit that file with replace_lines on a small range; "
@@ -933,6 +1071,7 @@ class LocalFixtureEnvironment:
         self.violations: list[str] = []
         self._initial_hashes: dict[str, str] = {}
         self._read_files: set[str] = set()
+        self._edited_since_verification = False
         self._action_loop_guard = ActionLoopGuard()
 
     def reset(self, task: CodingTask) -> str:
@@ -955,6 +1094,7 @@ class LocalFixtureEnvironment:
         self._initial_hashes = self._file_hashes()
         self.baseline_result = self.verifier.run(self.repository, task.test_command)
         self.last_test_result = self.baseline_result
+        self._edited_since_verification = False
         if self.baseline_result.passed:
             self.close()
             raise EnvironmentError(f"task {task.task_id} is invalid: baseline tests already pass")
@@ -1002,11 +1142,17 @@ class LocalFixtureEnvironment:
                 if occurrences != 1:
                     raise ToolError(replace_text_mismatch_message(content, old))
                 updated = content.replace(old, new, 1)
-                unparseable = python_edit_syntax_error(relative, updated)
+                unparseable = python_edit_syntax_error(
+                    relative,
+                    updated,
+                    original=content,
+                    replaced_lines=replaced_line_span(content, old),
+                )
                 if unparseable is not None:
                     raise ToolError(unparseable)
                 path.write_text(updated, encoding="utf-8")
                 self._read_files.discard(relative)
+                self._edited_since_verification = True
                 result = StepResult(f"Updated {relative}.", False)
             elif action.kind is ActionKind.REPLACE_LINES:
                 path = self._resolve_repository_path(action.arguments.get("path"))
@@ -1021,28 +1167,42 @@ class LocalFixtureEnvironment:
                     end_line=action.arguments.get("end_line"),
                     new=new,
                 )
-                unparseable = python_edit_syntax_error(relative, updated)
+                unparseable = python_edit_syntax_error(
+                    relative,
+                    updated,
+                    original=content,
+                    replaced_lines=(
+                        action.arguments.get("start_line"),
+                        action.arguments.get("end_line"),
+                    ),
+                )
                 if unparseable is not None:
                     raise ToolError(unparseable)
                 path.write_text(updated, encoding="utf-8")
                 self._read_files.discard(relative)
+                self._edited_since_verification = True
                 result = StepResult(f"Updated {relative}.", False)
             elif action.kind is ActionKind.RUN_TESTS:
                 result = self.verifier.run(repository, task.test_command)
                 self.last_test_result = result
+                self._edited_since_verification = False
                 result = StepResult(self._test_observation(result), result.passed, result)
             elif action.kind is ActionKind.FINISH:
                 # `finish` re-runs the verifier, so a finish with no edit behind it can be
                 # refused with the failure the policy needs instead of ending the episode.
                 # An unrepaired failure stays valid evidence, so it is reused rather than
-                # paid for twice.
+                # paid for twice. A finish that follows an edit is the one case that has to
+                # run: nothing else can change a failure, and a policy that probes with
+                # `finish` between reads otherwise pays for a container run per probe.
                 verified = self.last_test_result
-                if verified is None or verified.passed or self._action_loop_guard.patched:
+                if verified is None or verified.passed or self._edited_since_verification:
                     verified = self.verifier.run(repository, task.test_command)
                     self.last_test_result = verified
+                    self._edited_since_verification = False
                 refusal = premature_finish_refusal(
                     self._action_loop_guard.patched,
                     verified,
+                    steps_remaining=task.max_steps - self.steps,
                 )
                 if refusal is not None:
                     result = StepResult(
@@ -1067,6 +1227,7 @@ class LocalFixtureEnvironment:
         task, repository = self._require_active()
         result = self.verifier.run(repository, task.test_command)
         self.last_test_result = result
+        self._edited_since_verification = False
         return result
 
     def changed_files(self) -> tuple[str, ...]:
@@ -1114,6 +1275,7 @@ class LocalFixtureEnvironment:
         self.last_test_result = None
         self._initial_hashes = {}
         self._read_files = set()
+        self._edited_since_verification = False
         self._action_loop_guard.reset()
 
     def __enter__(self) -> LocalFixtureEnvironment:

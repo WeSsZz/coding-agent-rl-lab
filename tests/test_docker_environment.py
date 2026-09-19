@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from coding_agent_rl_lab.contracts import ActionKind, AgentAction, CodingTask, DatasetSplit
@@ -57,6 +58,22 @@ class FakeDockerRunner:
         if "replace_text requires exactly one match" in " ".join(argv):
             return CommandExecution(0)
         return CommandExecution(0)
+
+
+class _AlwaysFailingDockerRunner(FakeDockerRunner):
+    """A container whose tests never pass, so an applied patch can still be the wrong fix."""
+
+    def run(
+        self,
+        argv: tuple[str, ...],
+        *,
+        input_text: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> CommandExecution:
+        execution = super().run(argv, input_text=input_text, timeout_seconds=timeout_seconds)
+        if argv[-4:] == ("python", "-m", "pytest", "-q"):
+            return CommandExecution(1, stdout="1 failed", duration_ms=11.0)
+        return execution
 
 
 class DockerEnvironmentTests(unittest.TestCase):
@@ -158,7 +175,52 @@ class DockerEnvironmentTests(unittest.TestCase):
         # instead of paying for a second verifier run inside the container.
         self.assertEqual(runs_after_refusal, 1)
         self.assertTrue(finished.terminated)
-        self.assertTrue(finished.test_result.passed)
+
+    def test_finish_after_a_patch_that_did_not_fix_the_failure_is_refused(self) -> None:
+        runner = _AlwaysFailingDockerRunner(self.base_commit)
+        environment = DockerSandboxEnvironment(self.spec, DockerSandboxConfig(), runner)
+        try:
+            environment.reset(self.task)
+            environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_TEXT,
+                    {"path": "src/bug.py", "old": "return False", "new": "return None"},
+                )
+            )
+            refused = environment.step(AgentAction(ActionKind.FINISH))
+        finally:
+            environment.close()
+
+        self.assertFalse(refused.terminated)
+        self.assertTrue(refused.observation.startswith("Tool error: finish refused"))
+        self.assertIn("has been edited and the verifier still fails", refused.observation)
+        self.assertIn("Tests failed", refused.observation)
+
+    def test_a_repeated_finish_without_an_edit_does_not_rerun_the_verifier(self) -> None:
+        runner = _AlwaysFailingDockerRunner(self.base_commit)
+        environment = DockerSandboxEnvironment(self.spec, DockerSandboxConfig(), runner)
+        task = replace(self.task, max_steps=8)
+        try:
+            environment.reset(task)
+            environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_TEXT,
+                    {"path": "src/bug.py", "old": "return False", "new": "return None"},
+                )
+            )
+            after_edit = environment.step(AgentAction(ActionKind.FINISH))
+            runs_after_edit = runner.test_runs
+            environment.step(AgentAction(ActionKind.READ_FILE, {"path": "src/bug.py"}))
+            probe = environment.step(AgentAction(ActionKind.FINISH))
+        finally:
+            environment.close()
+
+        # The edit forced a run; the probe that followed no edit is answered from the failure
+        # that run already produced.
+        self.assertIn("has been edited and the verifier still fails", after_edit.observation)
+        self.assertIn("has been edited and the verifier still fails", probe.observation)
+        self.assertEqual(runs_after_edit, 2)
+        self.assertEqual(runner.test_runs, 2)
 
     def test_replace_lines_requires_read_and_updates_source(self) -> None:
         runner = FakeDockerRunner(self.base_commit)
@@ -596,6 +658,43 @@ class DockerEnvironmentTests(unittest.TestCase):
 
                 self.assertEqual(completed.returncode, 1)
                 self.assertEqual(path.read_text(encoding="utf-8"), content)
+                self.assertEqual(completed.stderr.strip(), expected)
+
+    def test_edit_scripts_name_the_enclosing_lines_of_a_block_left_open(self) -> None:
+        content = 'url_paths = {\n    "a": 1,\n    "b": 2,\n}\n'
+        broken = 'url_paths = {\n    "d": 4,\n}\n    "b": 2,\n}\n'
+        cases = (
+            (
+                DockerSandboxEnvironment._REPLACE_LINES_SCRIPT,
+                ("example.py", "1", "2", 'url_paths = {\n    "d": 4,\n}'),
+            ),
+            (
+                DockerSandboxEnvironment._REPLACE_TEXT_SCRIPT,
+                (
+                    "example.py",
+                    'url_paths = {\n    "a": 1,',
+                    'url_paths = {\n    "d": 4,\n}',
+                ),
+            ),
+        )
+        for script, arguments in cases:
+            with self.subTest(script=arguments), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory, "example.py")
+                path.write_text(content, encoding="utf-8")
+                completed = subprocess.run(
+                    (sys.executable, "-c", script, *arguments),
+                    cwd=directory,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                expected = python_edit_syntax_error(
+                    "example.py", broken, original=content, replaced_lines=(1, 2)
+                )
+
+                self.assertEqual(completed.returncode, 1)
+                self.assertEqual(path.read_text(encoding="utf-8"), content)
+                self.assertIn("spans lines 1-4", expected or "")
                 self.assertEqual(completed.stderr.strip(), expected)
 
     def test_search_text_ranks_source_before_tests_and_docs(self) -> None:

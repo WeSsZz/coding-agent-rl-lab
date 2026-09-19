@@ -12,6 +12,8 @@ from coding_agent_rl_lab.environment import (
     ActionLoopGuard,
     LocalFixtureEnvironment,
     failure_summary,
+    premature_finish_refusal,
+    python_edit_syntax_error,
     render_numbered_window,
     replace_text_mismatch_message,
     search_repository,
@@ -144,6 +146,58 @@ class EnvironmentTests(unittest.TestCase):
 
             self.assertTrue(finished.terminated)
             self.assertTrue(finished.test_result.passed)
+
+    def test_finish_after_an_edit_that_did_not_fix_the_failure_is_refused(self) -> None:
+        with LocalFixtureEnvironment(self.root) as environment:
+            environment.reset(self.task)
+            environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_TEXT,
+                    {
+                        "path": "calculator.py",
+                        "old": "return list(range(start, end))",
+                        "new": "return list(range(start, end))  # not the fix",
+                    },
+                )
+            )
+            refused = environment.step(AgentAction(ActionKind.FINISH))
+            repaired = environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_TEXT,
+                    {
+                        "path": "calculator.py",
+                        "old": "return list(range(start, end))  # not the fix",
+                        "new": "return list(range(start, end + 1))",
+                    },
+                )
+            )
+            finished = environment.step(AgentAction(ActionKind.FINISH))
+
+            self.assertFalse(refused.terminated)
+            self.assertTrue(refused.observation.startswith("Tool error: finish refused"))
+            self.assertIn("has been edited and the verifier still fails", refused.observation)
+            self.assertIn("Tests failed", refused.observation)
+            self.assertTrue(repaired.observation.startswith("Updated "))
+            self.assertTrue(finished.terminated)
+            self.assertTrue(finished.test_result.passed)
+
+    def test_patched_failure_stops_being_refused_when_the_budget_is_gone(self) -> None:
+        failed = TestResult(("pytest",), False, 1, "1 failed", "1 failed", 1.0, False)
+
+        refusal = premature_finish_refusal(True, failed, steps_remaining=2)
+        last_step = premature_finish_refusal(True, failed, steps_remaining=1)
+        unknown_budget = premature_finish_refusal(True, failed)
+        unpatched = premature_finish_refusal(False, failed, steps_remaining=5)
+        unpatched_last_step = premature_finish_refusal(False, failed, steps_remaining=1)
+
+        self.assertIn("a source file has been edited and the verifier still fails", refusal)
+        self.assertIn("You have 2 tool steps left", refusal)
+        self.assertIsNone(last_step)
+        self.assertIn("a source file has been edited and the verifier still fails", unknown_budget)
+        self.assertNotIn("tool steps left", unknown_budget)
+        self.assertIn("no source file has been edited", unpatched)
+        # The last step ends the episode either way, so it is not refused into a dead end.
+        self.assertIsNone(unpatched_last_step)
 
     def test_replace_text_quotes_the_exact_text_when_only_whitespace_differs(self) -> None:
         with LocalFixtureEnvironment(self.root) as environment:
@@ -298,6 +352,51 @@ class EnvironmentTests(unittest.TestCase):
                 "\n"
                 "    return list(range(start, end))\n",
             )
+
+    def test_edit_that_leaves_a_block_open_names_the_enclosing_lines(self) -> None:
+        content = 'url_paths = {\n    "a": 1,\n    "b": 2,\n}\n'
+        broken = 'url_paths = {\n    "d": 4,\n}\n    "b": 2,\n}\n'
+
+        message = python_edit_syntax_error(
+            "pkg/api/urls.py",
+            broken,
+            original=content,
+            replaced_lines=(1, 2),
+        )
+        whole_statement = python_edit_syntax_error(
+            "pkg/api/urls.py",
+            "def corrected():\n        return 1\n",
+            original="def corrected():\n    return 1\n",
+            replaced_lines=(2, 2),
+        )
+
+        self.assertIn("spans lines 1-4", message)
+        self.assertIn("give replace_lines that whole range", message)
+        self.assertNotIn("spans lines", whole_statement or "")
+
+    def test_recovery_directive_names_the_files_the_results_mentioned(self) -> None:
+        guard = ActionLoopGuard()
+        guard.record(
+            AgentAction(ActionKind.SEARCH_TEXT, {"query": "moto-api/config"}),
+            'tests/test_config.py:5:    response = get("/moto-api/config")\n'
+            'No implementation file contains "moto-api/config". Shorter query "moto-api" '
+            "matches implementation files:\n"
+            'moto/moto_api/_internal/urls.py:10:    "{0}/moto-api/$": response_instance.dashboard,',
+        )
+        guard.record(
+            AgentAction(ActionKind.FINISH),
+            "Tool error: finish refused: the verifier still fails",
+        )
+        guard.rejection_for(AgentAction(ActionKind.FINISH))
+
+        directive = guard.rejection_for(AgentAction(ActionKind.FINISH))
+
+        self.assertIn(
+            "Files your own results named and you have not read: "
+            "moto/moto_api/_internal/urls.py",
+            directive,
+        )
+        self.assertNotIn("tests/test_config.py,", directive)
 
     def test_verifier_output_detail_keeps_the_stream_that_names_the_failure(self) -> None:
         result = TestResult(

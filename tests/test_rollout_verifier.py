@@ -7,6 +7,7 @@ from coding_agent_rl_lab.contracts import (
     AgentAction,
     CodingTask,
     DatasetSplit,
+    PolicyDecision,
     PolicyManifest,
     StepResult,
     TestResult,
@@ -57,6 +58,7 @@ class _ScriptedEnvironment:
         self.tool_calls = 0
         self.violations: list[str] = []
         self.closed = False
+        self.finalize_calls = 0
         self._final = final
         self._changed_files = changed_files
 
@@ -71,6 +73,7 @@ class _ScriptedEnvironment:
         return StepResult("Tool error: unsupported in the double", False, self.last_test_result)
 
     def finalize(self) -> TestResult:
+        self.finalize_calls += 1
         return self._final
 
     def changed_files(self) -> tuple[str, ...]:
@@ -107,7 +110,42 @@ class _SingleEnvironmentProvider:
         return self.environment
 
 
+class _UnreachableEndpointPolicy:
+    """A policy that cannot reach the model and answers with the `finish` fallback."""
+
+    manifest = PolicyManifest(policy_id="unreachable", version="1", policy_type="test")
+
+    def next_action(self, task, history, *, seed=None, initial_observation=""):
+        del task, history, seed, initial_observation
+        return PolicyDecision(
+            action=AgentAction(ActionKind.FINISH),
+            metadata={"errors": ["model endpoint request failed: Connection refused"]},
+            violation="policy_transport_error",
+        )
+
+
 class RolloutVerifierTests(unittest.TestCase):
+    def test_a_policy_that_cannot_reach_the_model_ends_the_episode(self) -> None:
+        environment = _ScriptedEnvironment(_result(*FAIL_TO_PASS), _result(*FAIL_TO_PASS), ())
+        collector = RolloutCollector(_SingleEnvironmentProvider(environment))
+
+        trajectory = collector.collect(
+            _task(),
+            _UnreachableEndpointPolicy(),
+            repetition=1,
+            seed=7,
+        )
+
+        self.assertEqual(len(trajectory.steps), 1)
+        self.assertTrue(trajectory.steps[0].terminated)
+        self.assertEqual(trajectory.steps[0].violation, "policy_transport_error")
+        self.assertIn("Connection refused", trajectory.steps[0].observation)
+        self.assertEqual(trajectory.reward.violations, ("policy_transport_error",))
+        # The fallback `finish` is never executed - `reset` is the only call the double sees -
+        # and the verifier still grades whatever the container holds.
+        self.assertEqual(environment.tool_calls, 1)
+        self.assertEqual(environment.finalize_calls, 1)
+
     def _collect(
         self,
         final: TestResult,

@@ -5,17 +5,75 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
+from urllib.error import URLError
 
 from coding_agent_rl_lab.evaluation import load_builtin_tasks
 from coding_agent_rl_lab.contracts import DatasetSplit, PolicyManifest
 from coding_agent_rl_lab.swe_gym_rollout import (
     build_parser,
     collect_trajectories_incrementally,
+    require_served_model,
     write_rollout_checkpoint,
 )
 
 
 class SWEGymRolloutCommandTests(unittest.TestCase):
+    def test_the_served_model_is_required_before_any_trial(self) -> None:
+        def serving(served: list[str]):
+            return lambda url, timeout: {"data": [{"id": name} for name in served]}
+
+        def refusing(url: str, timeout: float):
+            raise URLError("Connection refused")
+
+        self.assertEqual(
+            require_served_model(
+                "http://127.0.0.1:8000/v1",
+                "Qwen2.5-Coder-14B-Instruct",
+                reader=serving(["Qwen2.5-Coder-14B-Instruct"]),
+            ),
+            "http://127.0.0.1:8000/v1/models",
+        )
+        with self.assertRaises(SystemExit) as unreachable:
+            require_served_model(
+                "http://127.0.0.1:8000/v1",
+                "Qwen2.5-Coder-14B-Instruct",
+                reader=refusing,
+            )
+        with self.assertRaises(SystemExit) as wrong_model:
+            require_served_model(
+                "http://127.0.0.1:8000/v1",
+                "Qwen2.5-Coder-14B-Instruct",
+                reader=serving(["Qwen2.5-Coder-7B-Instruct"]),
+            )
+
+        self.assertIn("is not reachable", str(unreachable.exception))
+        self.assertIn("Connection refused", str(unreachable.exception))
+        self.assertIn("not Qwen2.5-Coder-14B-Instruct", str(wrong_model.exception))
+
+    def test_a_transport_failure_stops_the_run_after_the_trial_it_happened_in(self) -> None:
+        task = load_builtin_tasks(Path(__file__).resolve().parents[1])[0]
+        failed = Mock()
+        failed.reward = Mock(violations=("policy_transport_error",))
+        failed.steps = (
+            Mock(policy_metadata={"errors": ["model endpoint request failed: Connection refused"]}),
+        )
+        collector = Mock()
+        collector.collect.return_value = failed
+
+        with self.assertRaises(SystemExit) as raised:
+            collect_trajectories_incrementally(
+                (task,),
+                Mock(),
+                collector,
+                repetitions=2,
+                base_seed=123,
+            )
+
+        message = str(raised.exception)
+        self.assertIn(task.task_id, message)
+        self.assertIn("Connection refused", message)
+        self.assertEqual(collector.collect.call_count, 1)
+
     def test_repetitions_defaults_to_one(self) -> None:
         args = build_parser().parse_args(["--model", "example/coder"])
 
@@ -79,7 +137,7 @@ class SWEGymRolloutCommandTests(unittest.TestCase):
 
     def test_incremental_collection_checkpoints_completed_trajectories_before_failure(self) -> None:
         task = load_builtin_tasks(Path(__file__).resolve().parents[1])[0]
-        first = Mock()
+        first = Mock(reward=Mock(violations=()))
         collector = Mock()
         collector.collect.side_effect = [first, RuntimeError("interrupted")]
         progress = []
@@ -133,7 +191,7 @@ class SWEGymRolloutCommandTests(unittest.TestCase):
             seed=123,
             policy=policy.manifest,
         )
-        second = Mock()
+        second = Mock(reward=Mock(violations=()))
         collector = Mock()
         collector.collect.return_value = second
 

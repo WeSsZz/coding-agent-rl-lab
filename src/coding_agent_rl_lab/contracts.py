@@ -66,6 +66,12 @@ class PolicyDecision:
     violation: str | None = None
 
 
+#: Violations that mean no action was produced: the policy answers an unreachable endpoint or
+#: an unparseable response with a `finish` fallback. Executing that fallback would end an
+#: episode on a decision the policy never made, so the collector stops instead.
+POLICY_FALLBACK_VIOLATIONS = frozenset({"policy_transport_error", "policy_protocol_error"})
+
+
 @dataclass(frozen=True)
 class TestResult:
     command: tuple[str, ...]

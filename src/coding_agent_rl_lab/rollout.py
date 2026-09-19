@@ -9,6 +9,7 @@ from typing import Any
 from .contracts import (
     ActionKind,
     CodingTask,
+    POLICY_FALLBACK_VIOLATIONS,
     PolicyDecision,
     RewardVector,
     TestResult,
@@ -18,6 +19,15 @@ from .contracts import (
 from .policies import Policy
 from .providers import EnvironmentProvider
 from .reward_shaping import build_training_reward, verifier_breakdown
+
+
+def _policy_failure_observation(decision: PolicyDecision) -> str:
+    errors = tuple(str(error) for error in decision.metadata.get("errors", ()))
+    detail = "; ".join(errors) or "no error detail recorded"
+    return (
+        f"Policy error: {decision.violation}: {detail}. The episode ends without a further "
+        "action, because the policy did not produce one."
+    )
 
 
 class RolloutCollector:
@@ -45,6 +55,26 @@ class RolloutCollector:
                     if isinstance(raw_decision, PolicyDecision)
                     else PolicyDecision(action=raw_decision)
                 )
+                if decision.violation in POLICY_FALLBACK_VIOLATIONS:
+                    # `next_action` answers a transport or protocol failure with a `finish`
+                    # fallback, and stepping that fallback would end the episode on a decision
+                    # the policy never made: every `v24` trial whose endpoint died spent the
+                    # rest of its budget on refusals against it. The episode stops here and the
+                    # verifier still grades whatever the container holds.
+                    steps.append(
+                        TrajectoryStep(
+                            sequence=len(steps) + 1,
+                            action=decision.action,
+                            observation=_policy_failure_observation(decision),
+                            terminated=True,
+                            test_result=None,
+                            violation=decision.violation,
+                            policy_input=decision.input_messages,
+                            policy_output=decision.output_text,
+                            policy_metadata=decision.metadata,
+                        )
+                    )
+                    break
                 if edited and decision.action.kind in {ActionKind.RUN_TESTS, ActionKind.FINISH}:
                     verifier_run_after_patch = True
                 result = environment.step(decision.action)

@@ -24,6 +24,8 @@ _IMPORT_STATEMENT = re.compile(
 )
 _FAILED_NODE = re.compile(r"^(?:FAILED|ERROR)[ \t]+(\S+)", re.MULTILINE)
 _RAISED_LINE = re.compile(r"^E[ \t]+(\S.*)$", re.MULTILINE)
+_LOGGED_ERROR = re.compile(r"^ERROR[ \t]+(\S+)[ \t]+(\S.*)$", re.MULTILINE)
+_LOGGED_ERROR_MAX_CHARS = 240
 _FRAME_STRING = re.compile(r"^[ \t]*(\w+)[ \t]*=[ \t]*'([^'\n]{1,80})'", re.MULTILINE)
 _FRAME_MARK = re.compile(
     r"^>[ \t]+(?P<statement>.*)\n\s*\n(?P<path>[^\s:]+):(?P<line>\d+):[ \t]*$",
@@ -592,7 +594,61 @@ def verifier_output_detail(result: TestResult, *, max_chars: int = 4_000) -> str
     return verifier_output_streams(result)[-max_chars:]
 
 
-def failure_summary(result: TestResult, *, max_chars: int = 500) -> str:
+def failing_nodes(text: str) -> list[str]:
+    """The nodes pytest reported as failing, in the order it printed them.
+
+    pytest writes one `FAILED <node>` line per failure into its short summary, but a
+    captured-log line also begins with `ERROR` and carries a logger name such as
+    `moto.core.responses:responses.py:180`. Only tokens that name a path or a node id are
+    failures, so a logged error cannot displace the node the run actually failed on.
+    """
+
+    nodes: list[str] = []
+    for match in _FAILED_NODE.finditer(text):
+        node = match.group(1)
+        if ("/" in node or "::" in node) and node not in nodes:
+            nodes.append(node)
+    return nodes
+
+
+def raised_line(text: str) -> str | None:
+    """The exception pytest reported, without the assertion diff printed under it.
+
+    pytest writes `E   AssertionError: assert ...` and then an indented difference whose
+    lines start with `+`, `-` or `?`, so taking the last `E` line reported `+ States.Runtime`
+    instead of the error that ended the run.
+    """
+
+    lines = [
+        line.strip()
+        for line in _RAISED_LINE.findall(text)
+        if line.strip()[:1] not in {"+", "-", "?"}
+    ]
+    return lines[-1] if lines else None
+
+
+def logged_error_line(text: str) -> str | None:
+    """The errors pytest captured from the code under test's own logging.
+
+    A run can end on an assertion about a wrong value while the reason sits only in a
+    logged exception, and that line reaches the observation but not the head that a weak
+    policy reads. The logger token carries the module and line the exception came from.
+    """
+
+    entries: list[str] = []
+    for match in _LOGGED_ERROR.finditer(text):
+        token = match.group(1)
+        if "/" in token or "::" in token:
+            continue
+        entry = f"{token} {' '.join(match.group(2).split())}"
+        if entry not in entries:
+            entries.append(entry)
+    if not entries:
+        return None
+    return "[logged errors] " + ", ".join(entries[:2])[:_LOGGED_ERROR_MAX_CHARS]
+
+
+def failure_summary(result: TestResult, *, max_chars: int = 700) -> str:
     """Lift the actionable head out of a failed verifier run.
 
     pytest renders a failure as a screen of framework source around one assertion, so a
@@ -605,11 +661,7 @@ def failure_summary(result: TestResult, *, max_chars: int = 500) -> str:
     if result.passed:
         return ""
     text = verifier_output_streams(result)
-    failures: list[str] = []
-    for match in _FAILED_NODE.finditer(text):
-        node = match.group(1)
-        if node not in failures:
-            failures.append(node)
+    failures = failing_nodes(text)
     statement: str | None = None
     for match in _FRAME_MARK.finditer(text):
         path = match.group("path")
@@ -619,7 +671,7 @@ def failure_summary(result: TestResult, *, max_chars: int = 500) -> str:
             f"{path}:{match.group('line')}: "
             f"{' '.join(match.group('statement').split())}"
         )
-    raised = _RAISED_LINE.findall(text)
+    raised = raised_line(text)
     literals: list[str] = []
     for name, value in _FRAME_STRING.findall(text):
         entry = f"{name} = {value!r}"
@@ -631,7 +683,10 @@ def failure_summary(result: TestResult, *, max_chars: int = 500) -> str:
     if statement:
         parts.append("[failing statement] " + statement[:200])
     if raised:
-        parts.append("[last error] " + raised[-1].strip())
+        parts.append("[last error] " + raised[:200])
+    logged = logged_error_line(text)
+    if logged:
+        parts.append(logged)
     if literals:
         parts.append("[string values in the failing frame] " + ", ".join(literals[:4]))
     return "\n".join(parts)[:max_chars]

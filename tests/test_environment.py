@@ -355,6 +355,48 @@ class EnvironmentTests(unittest.TestCase):
             "",
         )
 
+    def test_failure_summary_keeps_the_node_and_reports_a_logged_error(self) -> None:
+        result = TestResult(
+            ("pytest",),
+            False,
+            1,
+            "____________________________ test_state_machine ____________________________\n"
+            ">           assert execution[\"error\"] == \"test error\"\n"
+            "E           AssertionError: assert 'States.Runtime' == 'test error'\n"
+            "E             \n"
+            "E             - test error\n"
+            "E             + States.Runtime\n"
+            "\n"
+            "tests/test_stepfunctions/parser/test_stepfunctions_dynamodb_integration.py:201:"
+            " AssertionError\n"
+            "------------------------------ Captured log call -------------------------------\n"
+            "ERROR    moto.stepfunctions.parser.asl.component.eval_component:eval_component.py:60"
+            " Exception=AttributeError, Details=[\"'NoneType' object has no attribute"
+            " 'startswith'\"]\n"
+            "ERROR    moto.stepfunctions.parser.asl.component.program.program:program.py:102"
+            " Stepfunctions computation ended with exception.\n"
+            "=========================== short test summary info ============================\n"
+            "FAILED tests/test_stepfunctions/parser/test_stepfunctions_dynamodb_integration.py"
+            "::test_state_machine_calling_dynamodb_put_wait_for_task_token\n",
+            "",
+            1.0,
+            False,
+        )
+
+        summary = failure_summary(result)
+        lines = summary.splitlines()
+
+        self.assertEqual(
+            lines[0],
+            "[failing tests] tests/test_stepfunctions/parser/"
+            "test_stepfunctions_dynamodb_integration.py::"
+            "test_state_machine_calling_dynamodb_put_wait_for_task_token",
+        )
+        self.assertIn("[last error] AssertionError: assert 'States.Runtime' == 'test error'", summary)
+        self.assertIn("[logged errors]", summary)
+        self.assertIn("eval_component:eval_component.py:60", summary)
+        self.assertIn("'NoneType' object has no attribute 'startswith'", summary)
+
     def test_path_escape_is_a_hard_violation(self) -> None:
         with LocalFixtureEnvironment(self.root) as environment:
             environment.reset(self.task)

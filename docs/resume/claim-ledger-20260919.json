@@ -1,0 +1,419 @@
+{
+  "schema_version": "1.0",
+  "case_id": "RL-LAB-RESUME-20260919",
+  "sources": [
+    {
+      "source_id": "S1",
+      "source_type": "repository",
+      "title": "src/coding_agent_rl_lab/docker_environment.py",
+      "locator": "D:/Developer/coding-agent-rl-lab/src/coding_agent_rl_lab/docker_environment.py",
+      "provided_by": "user",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "本地仓库代码或实验记录；本轮不重新运行远端实验"
+    },
+    {
+      "source_id": "S2",
+      "source_type": "repository",
+      "title": "README.md",
+      "locator": "D:/Developer/coding-agent-rl-lab/README.md",
+      "provided_by": "user",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "本地仓库代码或实验记录；本轮不重新运行远端实验"
+    },
+    {
+      "source_id": "S3",
+      "source_type": "repository",
+      "title": "README.md",
+      "locator": "D:/Developer/coding-agent-rl-lab/README.md",
+      "provided_by": "user",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "本地仓库代码或实验记录；本轮不重新运行远端实验"
+    },
+    {
+      "source_id": "S4",
+      "source_type": "repository",
+      "title": "src/coding_agent_rl_lab/sft_train.py",
+      "locator": "D:/Developer/coding-agent-rl-lab/src/coding_agent_rl_lab/sft_train.py",
+      "provided_by": "user",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "本地仓库代码或实验记录；本轮不重新运行远端实验"
+    },
+    {
+      "source_id": "S5",
+      "source_type": "repository",
+      "title": "README.md",
+      "locator": "D:/Developer/coding-agent-rl-lab/README.md",
+      "provided_by": "user",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "本地仓库代码或实验记录；本轮不重新运行远端实验"
+    },
+    {
+      "source_id": "S6",
+      "source_type": "repository",
+      "title": "README.md",
+      "locator": "D:/Developer/coding-agent-rl-lab/README.md",
+      "provided_by": "user",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "本地仓库代码或实验记录；本轮不重新运行远端实验"
+    },
+    {
+      "source_id": "S7",
+      "source_type": "repository",
+      "title": "docs/adapter-direction-check-20260913.md",
+      "locator": "D:/Developer/coding-agent-rl-lab/docs/adapter-direction-check-20260913.md",
+      "provided_by": "user",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "本地仓库代码或实验记录；本轮不重新运行远端实验"
+    },
+    {
+      "source_id": "S8",
+      "source_type": "repository",
+      "title": "src/coding_agent_rl_lab/reward_shaping.py",
+      "locator": "D:/Developer/coding-agent-rl-lab/src/coding_agent_rl_lab/reward_shaping.py",
+      "provided_by": "user",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "本地仓库代码或实验记录；本轮不重新运行远端实验"
+    },
+    {
+      "source_id": "S9",
+      "source_type": "repository",
+      "title": "docs/moto-7607-local-edit-diagnostic-execution-20260917.md",
+      "locator": "D:/Developer/coding-agent-rl-lab/docs/moto-7607-local-edit-diagnostic-execution-20260917.md",
+      "provided_by": "user",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "本地仓库代码或实验记录；本轮不重新运行远端实验"
+    },
+    {
+      "source_id": "S10",
+      "source_type": "project_document",
+      "title": "教师正对照与干净底座配对诊断",
+      "locator": "docs/moto-7607-base-paired-positive-control-execution-20260918.md",
+      "provided_by": "user",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "读取本地执行报告；本轮没有重新运行远端实验"
+    }
+  ],
+  "experiences": [
+    {
+      "experience_id": "EXP01",
+      "experience_type": "project",
+      "organization": "",
+      "team": "",
+      "role": "项目实践",
+      "start_date": "",
+      "end_date": "",
+      "status": "ongoing",
+      "source_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "S8",
+        "S9",
+        "S10"
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "C01",
+      "experience_id": "EXP01",
+      "claim_type": "deliverable",
+      "raw_claim": "设计并实现公开任务与私有验证配置分离的 Docker 任务执行环境",
+      "normalized_claim": "设计并实现公开任务与私有验证配置分离的 Docker 任务执行环境",
+      "action": "设计并实现公开任务与私有验证配置分离的 Docker 任务执行环境",
+      "methods": [],
+      "business_object": "Coding Agent RL Lab",
+      "deliverables": [],
+      "result": "",
+      "role_scope": "module_contributor",
+      "tense": "tested",
+      "verification": "source_grounded",
+      "source_refs": [
+        {
+          "source_id": "S1",
+          "support_type": "supports",
+          "locator": "src/coding_agent_rl_lab/docker_environment.py",
+          "excerpt": "DockerSandboxProvider 隔离任务生命周期"
+        }
+      ],
+      "risk_flags": [],
+      "notes": "确认项目能力，不推断团队领导、商业上线或模型修复率增益。"
+    },
+    {
+      "claim_id": "C02",
+      "experience_id": "EXP01",
+      "claim_type": "deliverable",
+      "raw_claim": "实现模型工具交互轨迹及原子检查点与严格恢复",
+      "normalized_claim": "实现模型工具交互轨迹及原子检查点与严格恢复",
+      "action": "实现模型工具交互轨迹及原子检查点与严格恢复",
+      "methods": [],
+      "business_object": "Coding Agent RL Lab",
+      "deliverables": [],
+      "result": "",
+      "role_scope": "module_contributor",
+      "tense": "tested",
+      "verification": "source_grounded",
+      "source_refs": [
+        {
+          "source_id": "S2",
+          "support_type": "supports",
+          "locator": "README.md",
+          "excerpt": "长任务会在每条完整 trajectory 后原子更新报告和 JSONL 检查点"
+        }
+      ],
+      "risk_flags": [],
+      "notes": "确认项目能力，不推断团队领导、商业上线或模型修复率增益。"
+    },
+    {
+      "claim_id": "C03",
+      "experience_id": "EXP01",
+      "claim_type": "deliverable",
+      "raw_claim": "从固定训练任务补丁构建 204 条四阶段动作监督样本",
+      "normalized_claim": "从固定训练任务补丁构建 204 条四阶段动作监督样本",
+      "action": "从固定训练任务补丁构建 204 条四阶段动作监督样本",
+      "methods": [],
+      "business_object": "Coding Agent RL Lab",
+      "deliverables": [],
+      "result": "",
+      "role_scope": "module_contributor",
+      "tense": "tested",
+      "verification": "source_grounded",
+      "source_refs": [
+        {
+          "source_id": "S3",
+          "support_type": "supports",
+          "locator": "README.md",
+          "excerpt": "51 个源码 hunk 各自生成 locate、inspect、edit、verify 四阶段监督"
+        }
+      ],
+      "risk_flags": [],
+      "notes": "确认项目能力，不推断团队领导、商业上线或模型修复率增益。"
+    },
+    {
+      "claim_id": "C04",
+      "experience_id": "EXP01",
+      "claim_type": "method",
+      "raw_claim": "接入 completion-only LoRA SFT 与 TRL 多轮环境 GRPO",
+      "normalized_claim": "接入 completion-only LoRA SFT 与 TRL 多轮环境 GRPO",
+      "action": "接入 completion-only LoRA SFT 与 TRL 多轮环境 GRPO",
+      "methods": [],
+      "business_object": "Coding Agent RL Lab",
+      "deliverables": [],
+      "result": "",
+      "role_scope": "module_contributor",
+      "tense": "tested",
+      "verification": "source_grounded",
+      "source_refs": [
+        {
+          "source_id": "S4",
+          "support_type": "supports",
+          "locator": "src/coding_agent_rl_lab/sft_train.py",
+          "excerpt": "completion_only_loss=True"
+        }
+      ],
+      "risk_flags": [],
+      "notes": "确认项目能力，不推断团队领导、商业上线或模型修复率增益。"
+    },
+    {
+      "claim_id": "C05",
+      "experience_id": "EXP01",
+      "claim_type": "qualitative_result",
+      "raw_claim": "保持生成组为 2、训练 microbatch 降为 1 后真实任务单步运行不再 OOM",
+      "normalized_claim": "保持生成组为 2、训练 microbatch 降为 1 后真实任务单步运行不再 OOM",
+      "action": "保持生成组为 2、训练 microbatch 降为 1 后真实任务单步运行不再 OOM",
+      "methods": [],
+      "business_object": "Coding Agent RL Lab",
+      "deliverables": [],
+      "result": "",
+      "role_scope": "module_contributor",
+      "tense": "tested",
+      "verification": "source_grounded",
+      "source_refs": [
+        {
+          "source_id": "S5",
+          "support_type": "supports",
+          "locator": "README.md",
+          "excerpt": "完整 1-step 在 249.9 秒内结束且不再 OOM"
+        }
+      ],
+      "risk_flags": [],
+      "notes": "确认项目能力，不推断团队领导、商业上线或模型修复率增益。"
+    },
+    {
+      "claim_id": "C06",
+      "experience_id": "EXP01",
+      "claim_type": "qualitative_result",
+      "raw_claim": "完成真实 SWE-Gym 任务的非零梯度单步 GRPO 更新",
+      "normalized_claim": "完成真实 SWE-Gym 任务的非零梯度单步 GRPO 更新",
+      "action": "完成真实 SWE-Gym 任务的非零梯度单步 GRPO 更新",
+      "methods": [],
+      "business_object": "Coding Agent RL Lab",
+      "deliverables": [],
+      "result": "",
+      "role_scope": "module_contributor",
+      "tense": "tested",
+      "verification": "source_grounded",
+      "source_refs": [
+        {
+          "source_id": "S6",
+          "support_type": "supports",
+          "locator": "README.md",
+          "excerpt": "reward_std=0.1061、grad_norm=0.4935"
+        }
+      ],
+      "risk_flags": [],
+      "notes": "确认项目能力，不推断团队领导、商业上线或模型修复率增益。"
+    },
+    {
+      "claim_id": "C07",
+      "experience_id": "EXP01",
+      "claim_type": "qualitative_result",
+      "raw_claim": "在 32 条配对 rollout 中识别旧编辑奖励与测试改善不一致",
+      "normalized_claim": "在 32 条配对 rollout 中识别旧编辑奖励与测试改善不一致",
+      "action": "在 32 条配对 rollout 中识别旧编辑奖励与测试改善不一致",
+      "methods": [],
+      "business_object": "Coding Agent RL Lab",
+      "deliverables": [],
+      "result": "",
+      "role_scope": "module_contributor",
+      "tense": "tested",
+      "verification": "source_grounded",
+      "source_refs": [
+        {
+          "source_id": "S7",
+          "support_type": "supports",
+          "locator": "docs/adapter-direction-check-20260913.md",
+          "excerpt": "两个 adapter 均完成6个train、2个regression任务，每题2条；没有严格成功或可执行测试改善"
+        }
+      ],
+      "risk_flags": [],
+      "notes": "确认项目能力，不推断团队领导、商业上线或模型修复率增益。"
+    },
+    {
+      "claim_id": "C08",
+      "experience_id": "EXP01",
+      "claim_type": "deliverable",
+      "raw_claim": "实现对新增失败及未知结果不给部分奖励的 conservative-v2",
+      "normalized_claim": "实现对新增失败及未知结果不给部分奖励的 conservative-v2",
+      "action": "实现对新增失败及未知结果不给部分奖励的 conservative-v2",
+      "methods": [],
+      "business_object": "Coding Agent RL Lab",
+      "deliverables": [],
+      "result": "",
+      "role_scope": "module_contributor",
+      "tense": "tested",
+      "verification": "source_grounded",
+      "source_refs": [
+        {
+          "source_id": "S8",
+          "support_type": "supports",
+          "locator": "src/coding_agent_rl_lab/reward_shaping.py",
+          "excerpt": "conservative-v2 comparable gate"
+        }
+      ],
+      "risk_flags": [],
+      "notes": "确认项目能力，不推断团队领导、商业上线或模型修复率增益。"
+    },
+    {
+      "claim_id": "C09",
+      "experience_id": "EXP01",
+      "claim_type": "deliverable",
+      "raw_claim": "建立导航、固定状态与局部编辑分层诊断",
+      "normalized_claim": "建立导航、固定状态与局部编辑分层诊断",
+      "action": "建立导航、固定状态与局部编辑分层诊断",
+      "methods": [],
+      "business_object": "Coding Agent RL Lab",
+      "deliverables": [],
+      "result": "",
+      "role_scope": "module_contributor",
+      "tense": "tested",
+      "verification": "source_grounded",
+      "source_refs": [
+        {
+          "source_id": "S9",
+          "support_type": "supports",
+          "locator": "docs/moto-7607-local-edit-diagnostic-execution-20260917.md",
+          "excerpt": "7 个真实编辑前状态；可解析工具动作4/7；实际编辑4/7；failure reduction 0/7"
+        }
+      ],
+      "risk_flags": [],
+      "notes": "确认项目能力，不推断团队领导、商业上线或模型修复率增益。"
+    },
+    {
+      "claim_id": "C10",
+      "experience_id": "EXP01",
+      "claim_type": "qualitative_result",
+      "raw_claim": "在同题7个冻结状态引入教师后缀正对照，教师当前编辑立即成功3/7，接固定教师后缀后成功7/7",
+      "normalized_claim": "在同题7个冻结状态引入教师后缀正对照，教师当前编辑立即成功3/7，接固定教师后缀后成功7/7",
+      "action": "在同题7个冻结状态引入教师后缀正对照，教师当前编辑立即成功3/7，接固定教师后缀后成功7/7",
+      "methods": [
+        "固定状态配对",
+        "教师后缀正对照"
+      ],
+      "business_object": "moto-7607局部编辑诊断",
+      "deliverables": [],
+      "result": "",
+      "role_scope": "module_contributor",
+      "tense": "tested",
+      "verification": "source_grounded",
+      "source_refs": [
+        {
+          "source_id": "S10",
+          "support_type": "supports",
+          "locator": "docs/moto-7607-base-paired-positive-control-execution-20260918.md",
+          "excerpt": "在同题7个冻结状态引入教师后缀正对照，教师当前编辑立即成功3/7，接固定教师后缀后成功7/7"
+        }
+      ],
+      "risk_flags": [
+        "causality_not_established"
+      ],
+      "notes": "7个状态来自同一道题，不是7个独立Issue；不推断全任务修复率、泛化或统计显著性。"
+    },
+    {
+      "claim_id": "C11",
+      "experience_id": "EXP01",
+      "claim_type": "qualitative_result",
+      "raw_claim": "同题7个固定状态中底座可解析动作0/7、adapter为4/7；两者教师后缀语义成功均为0/7",
+      "normalized_claim": "同题7个固定状态中底座可解析动作0/7、adapter为4/7；两者教师后缀语义成功均为0/7",
+      "action": "同题7个固定状态中底座可解析动作0/7、adapter为4/7；两者教师后缀语义成功均为0/7",
+      "methods": [
+        "固定状态配对",
+        "教师后缀正对照"
+      ],
+      "business_object": "moto-7607局部编辑诊断",
+      "deliverables": [],
+      "result": "",
+      "role_scope": "module_contributor",
+      "tense": "tested",
+      "verification": "source_grounded",
+      "source_refs": [
+        {
+          "source_id": "S10",
+          "support_type": "supports",
+          "locator": "docs/moto-7607-base-paired-positive-control-execution-20260918.md",
+          "excerpt": "同题7个固定状态中底座可解析动作0/7、adapter为4/7；两者教师后缀语义成功均为0/7"
+        }
+      ],
+      "risk_flags": [
+        "causality_not_established"
+      ],
+      "notes": "7个状态来自同一道题，不是7个独立Issue；不推断全任务修复率、泛化或统计显著性。"
+    }
+  ],
+  "conflicts": [],
+  "evidence_gaps": []
+}

@@ -1,0 +1,185 @@
+{
+  "schema_version": "1.0",
+  "case_id": "RL-LAB-RESUME-20260919",
+  "generated_from": {
+    "claim_ledger": "claim-ledger-20260919.json",
+    "project_pitch": "project-pitch-v3-20260919.md"
+  },
+  "questions": [
+    {
+      "question_id": "IQ-001",
+      "category": "metric_attribution",
+      "claim_ids": [
+        "C06",
+        "C07"
+      ],
+      "requirement_ids": [],
+      "resume_anchor": "完成真实任务非零梯度单步更新",
+      "primary_question": "最终修复率提升了多少？",
+      "follow_ups": [
+        "非零梯度为何不能说明提升？",
+        "32条的分母如何组成？"
+      ],
+      "interviewer_intent": "检查是否区分机制成立与任务效果",
+      "answer_framework": [
+        "直接回答完整任务配对未证明修复率提升",
+        "说明两策略各16条及同任务种子预算",
+        "再解释工程交付与负结果驱动的改动"
+      ],
+      "evidence_to_prepare": [
+        "README.md",
+        "docs/adapter-direction-check-20260913.md"
+      ],
+      "safe_boundary": "不把curriculum 1/4当作完整任务或held-out成绩",
+      "risk_level": "high",
+      "status": "prepare"
+    },
+    {
+      "question_id": "IQ-002",
+      "category": "resume_claim",
+      "claim_ids": [
+        "C03",
+        "C04"
+      ],
+      "requirement_ids": [],
+      "resume_anchor": "204条动作监督与completion-only SFT",
+      "primary_question": "204条监督数据从哪里来？",
+      "follow_ups": [
+        "是204个Issue吗？",
+        "gold patch会不会泄漏进评测？"
+      ],
+      "interviewer_intent": "检查数据构造和监督边界",
+      "answer_framework": [
+        "解释6个train任务与51个hunk四阶段派生",
+        "展示一条prompt/completion及答案来源标记",
+        "解释regression/held-out隔离"
+      ],
+      "evidence_to_prepare": [
+        "src/coding_agent_rl_lab/swe_gym_sft.py",
+        "src/coding_agent_rl_lab/sft_train.py"
+      ],
+      "safe_boundary": "不能改称模型自主成功轨迹或上游全量训练",
+      "risk_level": "high",
+      "status": "prepare"
+    },
+    {
+      "question_id": "IQ-003",
+      "category": "method_decision",
+      "claim_ids": [
+        "C05",
+        "C06"
+      ],
+      "requirement_ids": [],
+      "resume_anchor": "生成组与训练microbatch解耦",
+      "primary_question": "OOM发生在哪，调整后改变了什么？",
+      "follow_ups": [
+        "组大小为何保持为2？",
+        "首次不OOM时梯度非零吗？"
+      ],
+      "interviewer_intent": "检查对采样与反向显存的理解",
+      "answer_framework": [
+        "说明backward OOM",
+        "生成组2、训练microbatch由2降1",
+        "区分首次零梯度运行与后续奖励有差异的有效更新"
+      ],
+      "evidence_to_prepare": [
+        "README.md",
+        "src/coding_agent_rl_lab/grpo_train.py"
+      ],
+      "safe_boundary": "不虚构显存节省比例或吞吐收益",
+      "risk_level": "high",
+      "status": "prepare"
+    },
+    {
+      "question_id": "IQ-004",
+      "category": "failure_reflection",
+      "claim_ids": [
+        "C07",
+        "C08"
+      ],
+      "requirement_ids": [],
+      "resume_anchor": "基于回归约束的版本化奖励",
+      "primary_question": "为何奖励涨了，修复没变好？",
+      "follow_ups": [
+        "新增失败怎么识别？",
+        "0.03是否已证明有效？",
+        "新奖励训练后效果如何？"
+      ],
+      "interviewer_intent": "检查奖励设计判断",
+      "answer_framework": [
+        "解释有效补丁和主动验证的旧部分奖励",
+        "用配对轨迹说明代理目标偏差",
+        "说明新增失败与未知状态准入门槛"
+      ],
+      "evidence_to_prepare": [
+        "docs/adapter-direction-check-20260913.md",
+        "src/coding_agent_rl_lab/reward_shaping.py"
+      ],
+      "safe_boundary": "规则修复不等于端到端能力提升，也没有完全消除奖励投机",
+      "risk_level": "high",
+      "status": "prepare"
+    },
+    {
+      "question_id": "IQ-005",
+      "category": "method_decision",
+      "claim_ids": [
+        "C09",
+        "C10",
+        "C11"
+      ],
+      "requirement_ids": [],
+      "resume_anchor": "教师后缀正对照区分格式与语义",
+      "primary_question": "为何不能用每步failure reduction判断编辑？",
+      "follow_ups": [
+        "7个样本来自几道题？",
+        "教师后缀能否排除所有等价修复？",
+        "是否adapter导致特殊token退化？"
+      ],
+      "interviewer_intent": "检查控制变量、反证和结论范围",
+      "answer_framework": [
+        "教师立即3/7、加后缀7/7证明即时指标不充分",
+        "同状态比较底座与adapter的可解析性",
+        "两者语义0/7限定为当前协议局部诊断"
+      ],
+      "evidence_to_prepare": [
+        "docs/moto-7607-base-paired-positive-control-execution-20260918.md"
+      ],
+      "safe_boundary": "同题7状态不是7题benchmark；底座有更严重退化，不归因adapter；固定后缀不能覆盖全部等价路径",
+      "risk_level": "high",
+      "status": "prepare"
+    },
+    {
+      "question_id": "IQ-006",
+      "category": "role_scope",
+      "claim_ids": [
+        "C01",
+        "C02"
+      ],
+      "requirement_ids": [],
+      "resume_anchor": "跨主机训练执行与严格恢复",
+      "primary_question": "哪些模块和关键判断是你亲自完成并能解释的？",
+      "follow_ups": [
+        "为什么自建受限工具？",
+        "恢复如何保证配置一致？"
+      ],
+      "interviewer_intent": "检查真实贡献与系统边界",
+      "answer_framework": [
+        "结合代码划定自己可解释和参与的模块",
+        "说明公开任务与私有配置、session和轨迹边界",
+        "用一个恢复或测试保护案例说明取舍"
+      ],
+      "evidence_to_prepare": [
+        "src/coding_agent_rl_lab/docker_environment.py",
+        "src/coding_agent_rl_lab/grpo_remote.py",
+        "src/coding_agent_rl_lab/rollout.py"
+      ],
+      "safe_boundary": "不从仓库存在推断独立完成全部实现；不称多机参数训练或生产集群",
+      "risk_level": "high",
+      "status": "prepare"
+    }
+  ],
+  "summary": {
+    "target": "Agent 训练 / 算法工程",
+    "scope": "项目片段，无具体JD，无完整个人简历"
+  }
+}

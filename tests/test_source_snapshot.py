@@ -145,6 +145,15 @@ class SourceSnapshotTests(unittest.TestCase):
         self.assertIn("sha256 mismatch: src/app.py", verified.stdout)
         self.assertIn("FAILED", verified.stdout)
 
+    def test_verify_names_a_bundle_that_is_not_there(self) -> None:
+        with TemporaryDirectory() as directory:
+            missing = Path(directory, "absent.tar")
+
+            verified = self.run_script("verify", "--bundle", str(missing), *REQUIRED)
+
+        self.assertEqual(verified.returncode, 1)
+        self.assertIn(f"no such bundle: {missing}", verified.stderr)
+
     def test_verify_reports_a_file_the_manifest_does_not_list(self) -> None:
         with TemporaryDirectory() as directory:
             repository = Path(directory)

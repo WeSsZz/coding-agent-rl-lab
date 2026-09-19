@@ -154,11 +154,15 @@ def create(arguments: argparse.Namespace) -> int:
 
 def verify(arguments: argparse.Namespace) -> int:
     if arguments.bundle is not None:
+        if not arguments.bundle.is_file():
+            raise SystemExit(f"no such bundle: {arguments.bundle}")
         members = _archive_members(arguments.bundle.read_bytes())
         default_manifest = arguments.bundle.with_name(
             arguments.bundle.name + MANIFEST_SUFFIX
         )
     else:
+        if not arguments.tree.is_dir():
+            raise SystemExit(f"no such tree: {arguments.tree}")
         members = _tree_members(arguments.tree)
         default_manifest = None
     manifest_path = arguments.manifest or default_manifest

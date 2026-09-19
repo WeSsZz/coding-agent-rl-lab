@@ -19,11 +19,21 @@ Also run tests.test_docker_integration against the cached SWE-Gym base image.
 .PARAMETER KeepBundle
 Keep the local tar after the run for debugging; the remote copies are still removed.
 
+.PARAMETER RemoteCommand
+Run this shell command inside the extracted tree instead of the unittest suite, so a
+rollout or a diagnostic uses this working copy rather than the VM's older checkout.
+It is executed by `sh -c` from the extracted repository root, so keep it free of
+single quotes and use `timeout` yourself for a step that can hang.
+
 .EXAMPLE
 pwsh -File scripts/sync_and_validate_vm.ps1
 
 .EXAMPLE
 pwsh -File scripts/sync_and_validate_vm.ps1 -DockerIntegration
+
+.EXAMPLE
+pwsh -File scripts/sync_and_validate_vm.ps1 -TimeoutSeconds 7200 `
+  -RemoteCommand "PYTHONPATH=src python3 -m coding_agent_rl_lab.swe_gym_rollout --model '<id>' --context-window-tokens 32768 --task-set held-out"
 #>
 [CmdletBinding()]
 param(
@@ -34,7 +44,8 @@ param(
     [int]$TimeoutSeconds = 1800,
     [string]$DockerBaseImage = "xingyaoww/sweb.eval.x86_64.getmoto_s_moto-7365:latest",
     [switch]$DockerIntegration,
-    [switch]$KeepBundle
+    [switch]$KeepBundle,
+    [string]$RemoteCommand = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -79,41 +90,49 @@ function Invoke-Remote {
 }
 
 try {
-    Write-Host "[0/5] checking $target"
+    Write-Host "[check] $target"
     Invoke-Remote "$Python -V && (docker --version || echo 'docker: not available')"
 
-    Write-Host "[1/5] packaging $($bundlePaths -join ', ')"
+    Write-Host "[pack] $($bundlePaths -join ', ')"
     & tar -cf $localBundle --exclude=__pycache__ --exclude=.pytest_cache @bundlePaths
     if ($LASTEXITCODE -ne 0) {
         throw "tar failed with exit code $LASTEXITCODE"
     }
     Write-Host ("      {0:N0} bytes" -f (Get-Item -LiteralPath $localBundle).Length)
 
-    Write-Host "[2/5] copying to $remoteBundle"
+    Write-Host "[upload] $remoteBundle"
     & scp @sshOptions $localBundle "${target}:$remoteBundle"
     if ($LASTEXITCODE -ne 0) {
         throw "scp failed with exit code $LASTEXITCODE"
     }
 
-    Write-Host "[3/5] unpacking into $remoteRoot"
+    Write-Host "[unpack] $remoteRoot"
     Invoke-Remote "rm -rf $remoteRoot && mkdir -p $remoteRoot && tar -xf $remoteBundle -C $remoteRoot"
 
-    Write-Host "[4/5] unittest suite"
-    Invoke-Remote "cd $remoteRoot && PYTHONPATH=src timeout $TimeoutSeconds $Python -m unittest discover -s tests"
+    if ($RemoteCommand) {
+        $escaped = $RemoteCommand -replace "'", "'\''"
+        Write-Host "[run] $RemoteCommand"
+        Invoke-Remote "cd $remoteRoot && timeout $TimeoutSeconds sh -c '$escaped'"
+    } else {
+        Write-Host "[run] unittest suite"
+        Invoke-Remote "cd $remoteRoot && PYTHONPATH=src timeout $TimeoutSeconds $Python -m unittest discover -s tests"
+    }
 
-    if ($DockerIntegration) {
-        Write-Host "[5/5] real Docker integration smoke"
+    if ($DockerIntegration -and -not $RemoteCommand) {
+        Write-Host "[run] real Docker integration smoke"
         Invoke-Remote (
             "cd $remoteRoot && RUN_DOCKER_INTEGRATION=1 " +
             "DOCKER_INTEGRATION_BASE_IMAGE=$DockerBaseImage PYTHONPATH=src " +
             "timeout $TimeoutSeconds $Python -m unittest tests.test_docker_integration -v"
         )
+    } elseif ($DockerIntegration) {
+        Write-Host "[run] Docker integration skipped while -RemoteCommand is set"
     } else {
-        Write-Host "[5/5] Docker integration skipped; pass -DockerIntegration to run it"
+        Write-Host "[run] Docker integration skipped; pass -DockerIntegration to run it"
     }
 }
 finally {
-    Write-Host "cleaning up $remoteRoot"
+    Write-Host "[cleanup] $remoteRoot"
     & ssh @sshOptions $target "rm -rf $remoteRoot $remoteBundle" 2>$null | Out-Null
     if ($KeepBundle) {
         Write-Host "kept local bundle: $localBundle"

@@ -85,6 +85,17 @@ pwsh -File scripts/sync_and_validate_vm.ps1 -DockerIntegration
 目录运行，结束后清理本地与远端临时文件。缺 `scripts` 或 `fixtures` 会让测试以 import error
 而不是 failure 的形式失败，所以这些目录必须一起打包。
 
+要在同一套当前代码上跑别的命令（例如模型 rollout），用 `-RemoteCommand`：它会在解包后的
+仓库根目录里执行，所以不会用到 VM 上那份可能过期的 checkout。
+
+```powershell
+pwsh -File scripts/sync_and_validate_vm.ps1 -TimeoutSeconds 7200 -RemoteCommand `
+  "PYTHONPATH=src python3 -m coding_agent_rl_lab.swe_gym_rollout --model '<served-model-id>' --api-base http://127.0.0.1:8000/v1 --task-set held-out --repetitions 4 --context-window-tokens 32768 --rows-cache /home/wesz/coding-agent-rl-lab/work/swe-gym-development-rows.jsonl --output work/held-out.json --trajectories work/held-out.jsonl"
+```
+
+VM 的 Docker worker 已缓存全部 10 个固定 SWE-Gym 镜像，固定行缓存也留在
+`~/coding-agent-rl-lab/work/swe-gym-development-rows.jsonl`，所以只要模型端点可达就能重跑。
+
 ## 安全边界
 
 本地环境只用于仓库中人工审核的微型 fixture：

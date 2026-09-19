@@ -502,6 +502,11 @@ for raw in sys.argv[1:]:
         result = self._exec(("python", "-c", self._PATCH_VALID_SCRIPT, *changed))
         return result.passed
 
+    def graded_targets(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """The declared SWE-Gym FAIL_TO_PASS and PASS_TO_PASS nodes for this task."""
+
+        return self.spec.fail_to_pass, self.spec.pass_to_pass
+
     def close(self) -> None:
         container_name = self.container_name
         self.container_name = None

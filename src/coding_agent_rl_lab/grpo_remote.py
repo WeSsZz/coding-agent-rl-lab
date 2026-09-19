@@ -222,6 +222,7 @@ class GRPOWorker:
             return
         try:
             changed_files = environment.changed_files()
+            fail_to_pass, pass_to_pass = environment.graded_targets()
             reward = build_training_reward(
                 baseline=environment.baseline_result,
                 final=test_result,
@@ -230,6 +231,8 @@ class GRPOWorker:
                 verifier_run_after_patch=session.verifier_run_after_patch,
                 violations=tuple(environment.violations),
                 reward_version=self._reward_version,
+                fail_to_pass=fail_to_pass,
+                pass_to_pass=pass_to_pass,
             )
             session.reward = reward.training_reward
             session.strict_reward = reward.strict_reward

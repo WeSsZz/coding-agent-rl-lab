@@ -10,6 +10,7 @@ from coding_agent_rl_lab.contracts import (
     TestResult,
     Trajectory,
     TrajectoryStep,
+    VerifierBreakdown,
 )
 from coding_agent_rl_lab.failure_analysis import build_failure_report, classify_trajectory
 
@@ -23,6 +24,7 @@ def _trajectory(
     timed_out: bool = False,
     success: bool = False,
     edit_attempt_failed: bool = False,
+    verifier: VerifierBreakdown | None = None,
 ) -> Trajectory:
     test_result = TestResult(("pytest",), False, None, "", "", 1.0, timed_out)
     step = TrajectoryStep(
@@ -64,6 +66,7 @@ def _trajectory(
         baseline_tests_passed=False,
         final_tests_passed=success,
         initial_observation="baseline failed",
+        verifier=verifier,
     )
 
 
@@ -106,6 +109,47 @@ class FailureAnalysisTests(unittest.TestCase):
         self.assertEqual(report["category_counts"], {"patch_failed_verifier": 1, "no_patch": 1})
         self.assertFalse(report["contains_raw_model_or_repository_content"])
         self.assertNotIn("observation", report["trajectories"][0])
+
+    def test_graded_attribution_is_reported_per_trial_and_aggregated(self) -> None:
+        report = build_failure_report(
+            (
+                _trajectory(
+                    changed_files=("src/code.py",),
+                    verifier=VerifierBreakdown(
+                        fail_to_pass_total=2,
+                        pass_to_pass_total=3,
+                        fail_to_pass_resolved=1,
+                        pass_to_pass_regressed=1,
+                        failed_nodes=("tests/test_existing.py::test_regression",),
+                        node_targets_declared=True,
+                    ),
+                ),
+            )
+        )
+
+        summary = report["trajectories"][0]
+        self.assertEqual(summary["fail_to_pass_total"], 2)
+        self.assertEqual(summary["fail_to_pass_resolved"], 1)
+        self.assertEqual(summary["pass_to_pass_regressed"], 1)
+        self.assertFalse(summary["collection_error"])
+        self.assertEqual(
+            report["graded_failure_attribution"],
+            {
+                "trials_with_declared_targets": 1,
+                "trials_with_any_fail_to_pass_resolved": 1,
+                "trials_with_pass_to_pass_regression": 1,
+                "trials_with_collection_error": 0,
+            },
+        )
+
+    def test_trials_without_a_breakdown_report_unknowns_instead_of_zeros(self) -> None:
+        report = build_failure_report((_trajectory(),))
+
+        summary = report["trajectories"][0]
+        self.assertFalse(summary["graded_targets_declared"])
+        self.assertIsNone(summary["fail_to_pass_resolved"])
+        self.assertIsNone(summary["pass_to_pass_regressed"])
+        self.assertEqual(report["graded_failure_attribution"]["trials_with_declared_targets"], 0)
 
 
 if __name__ == "__main__":

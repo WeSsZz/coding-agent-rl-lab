@@ -4,7 +4,7 @@ import unittest
 from dataclasses import replace
 
 from coding_agent_rl_lab.contracts import TestResult
-from coding_agent_rl_lab.reward_shaping import build_training_reward
+from coding_agent_rl_lab.reward_shaping import build_training_reward, verifier_breakdown
 
 
 def _result(*failed: str, passed: bool = False, timed_out: bool = False) -> TestResult:
@@ -166,6 +166,105 @@ class TrainingRewardTests(unittest.TestCase):
         )
 
         self.assertEqual(reward.training_reward, 0.0)
+
+
+class VerifierBreakdownTests(unittest.TestCase):
+    def test_declared_nodes_are_attributed_without_claiming_a_fix(self) -> None:
+        breakdown = verifier_breakdown(
+            _result("tests/test_bug.py::test_decimal"),
+            fail_to_pass=("tests/test_bug.py::test_decimal",),
+            pass_to_pass=("tests/test_existing.py::test_regression",),
+        )
+
+        self.assertTrue(breakdown.comparable)
+        self.assertEqual(breakdown.fail_to_pass_total, 1)
+        self.assertEqual(breakdown.fail_to_pass_resolved, 0)
+        self.assertEqual(breakdown.pass_to_pass_total, 1)
+        self.assertEqual(breakdown.pass_to_pass_regressed, 0)
+        self.assertEqual(breakdown.ungraded_failed_nodes, ())
+        self.assertTrue(breakdown.regression_free)
+
+    def test_regressions_and_ungraded_failures_are_separated(self) -> None:
+        breakdown = verifier_breakdown(
+            _result(
+                "tests/test_existing.py::test_regression",
+                "tests/test_other.py::test_unrelated",
+            ),
+            fail_to_pass=("tests/test_bug.py::test_decimal",),
+            pass_to_pass=("tests/test_existing.py::test_regression",),
+        )
+
+        self.assertEqual(breakdown.pass_to_pass_regressed, 1)
+        self.assertEqual(breakdown.failed_nodes, (
+            "tests/test_existing.py::test_regression",
+            "tests/test_other.py::test_unrelated",
+        ))
+        self.assertEqual(breakdown.ungraded_failed_nodes, ("tests/test_other.py::test_unrelated",))
+        self.assertFalse(breakdown.regression_free)
+
+    def test_parameterized_node_ids_count_as_their_declared_target(self) -> None:
+        breakdown = verifier_breakdown(
+            _result("tests/test_bug.py::test_decimal[1.5]"),
+            fail_to_pass=("tests/test_bug.py::test_decimal",),
+        )
+
+        self.assertEqual(breakdown.fail_to_pass_resolved, 0)
+        self.assertEqual(breakdown.ungraded_failed_nodes, ())
+
+    def test_passing_run_resolves_every_declared_target(self) -> None:
+        breakdown = verifier_breakdown(
+            _result(passed=True),
+            fail_to_pass=("tests/test_bug.py::test_decimal",),
+            pass_to_pass=("tests/test_existing.py::test_regression",),
+        )
+
+        self.assertEqual(breakdown.fail_to_pass_resolved, 1)
+        self.assertEqual(breakdown.pass_to_pass_regressed, 0)
+        self.assertTrue(breakdown.regression_free)
+
+    def test_collection_error_and_missing_summary_report_unknown_not_zero(self) -> None:
+        collection = verifier_breakdown(
+            replace(_result(), stderr="ERROR collecting tests/test_bug.py"),
+            fail_to_pass=("tests/test_bug.py::test_decimal",),
+        )
+        silent = verifier_breakdown(
+            _result(),
+            fail_to_pass=("tests/test_bug.py::test_decimal",),
+        )
+
+        self.assertTrue(collection.collection_error)
+        self.assertFalse(collection.comparable)
+        self.assertIsNone(collection.fail_to_pass_resolved)
+        self.assertFalse(collection.regression_free)
+        self.assertIsNone(silent.fail_to_pass_resolved)
+        self.assertIsNone(silent.pass_to_pass_regressed)
+        self.assertFalse(silent.regression_free)
+
+    def test_undeclared_runs_keep_the_failure_list_without_comparability(self) -> None:
+        breakdown = verifier_breakdown(_result("tests/test_a.py::test_a"))
+
+        self.assertFalse(breakdown.comparable)
+        self.assertFalse(breakdown.node_targets_declared)
+        self.assertEqual(breakdown.failed_nodes, ("tests/test_a.py::test_a",))
+        self.assertIsNone(verifier_breakdown(None))
+
+    def test_training_reward_carries_the_declared_breakdown(self) -> None:
+        reward = build_training_reward(
+            baseline=_result("tests/test_bug.py::test_decimal"),
+            final=_result("tests/test_bug.py::test_decimal"),
+            patch_created=True,
+            patch_valid=True,
+            verifier_run_after_patch=True,
+            violations=(),
+            reward_version="conservative-v2",
+            fail_to_pass=("tests/test_bug.py::test_decimal",),
+            pass_to_pass=("tests/test_existing.py::test_regression",),
+        )
+
+        self.assertEqual(reward.verifier.fail_to_pass_resolved, 0)
+        self.assertEqual(reward.verifier.pass_to_pass_regressed, 0)
+        self.assertEqual(reward.to_dict()["verifier"]["pass_to_pass_total"], 1)
+        self.assertEqual(reward.to_dict()["verifier"]["collection_error"], False)
 
 
 if __name__ == "__main__":

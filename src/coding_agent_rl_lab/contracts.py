@@ -89,6 +89,59 @@ class TestResult:
         )
 
 
+def _optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)
+
+
+@dataclass(frozen=True)
+class VerifierBreakdown:
+    """Node-level outcome of the graded verifier command.
+
+    `None` counts mean the run produced no usable per-test summary, so the value is
+    unknown rather than zero. `node_targets_declared` records whether the task named
+    FAIL_TO_PASS / PASS_TO_PASS nodes, which is what makes the counts comparable.
+    """
+
+    fail_to_pass_total: int = 0
+    pass_to_pass_total: int = 0
+    fail_to_pass_resolved: int | None = None
+    pass_to_pass_regressed: int | None = None
+    failed_nodes: tuple[str, ...] = ()
+    ungraded_failed_nodes: tuple[str, ...] = ()
+    node_targets_declared: bool = False
+    collection_error: bool = False
+
+    @property
+    def comparable(self) -> bool:
+        """True when this breakdown can decide graded regressions for the task."""
+
+        return self.node_targets_declared and not self.collection_error
+
+    @property
+    def regression_free(self) -> bool:
+        """True only when graded evidence proves no regression and no ungraded failure."""
+
+        if self.pass_to_pass_regressed is None:
+            return False
+        return self.pass_to_pass_regressed == 0 and not self.ungraded_failed_nodes
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> VerifierBreakdown:
+        return cls(
+            fail_to_pass_total=int(value.get("fail_to_pass_total", 0)),
+            pass_to_pass_total=int(value.get("pass_to_pass_total", 0)),
+            fail_to_pass_resolved=_optional_int(value.get("fail_to_pass_resolved")),
+            pass_to_pass_regressed=_optional_int(value.get("pass_to_pass_regressed")),
+            failed_nodes=tuple(value.get("failed_nodes", ())),
+            ungraded_failed_nodes=tuple(value.get("ungraded_failed_nodes", ())),
+            node_targets_declared=bool(value.get("node_targets_declared", False)),
+            collection_error=bool(value.get("collection_error", False)),
+        )
+
+
 @dataclass(frozen=True)
 class StepResult:
     observation: str
@@ -202,6 +255,8 @@ class Trajectory:
     final_tests_passed: bool
     initial_observation: str
     schema_version: int = 3
+    verifier: VerifierBreakdown | None = None
+    training_reward: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -227,4 +282,14 @@ class Trajectory:
             final_tests_passed=bool(value["final_tests_passed"]),
             initial_observation=str(value.get("initial_observation", "")),
             schema_version=schema_version,
+            verifier=(
+                VerifierBreakdown.from_dict(value["verifier"])
+                if isinstance(value.get("verifier"), dict)
+                else None
+            ),
+            training_reward=(
+                None
+                if value.get("training_reward") is None
+                else float(value["training_reward"])
+            ),
         )

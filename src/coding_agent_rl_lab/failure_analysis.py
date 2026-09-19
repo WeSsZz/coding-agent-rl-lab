@@ -70,10 +70,19 @@ def build_failure_report(trajectories: Iterable[Trajectory]) -> dict[str, Any]:
     category_counts: Counter[str] = Counter()
     by_task: dict[str, Counter[str]] = defaultdict(Counter)
     summaries: list[dict[str, Any]] = []
+    declared_trials = 0
+    resolved_trials = 0
+    regressed_trials = 0
+    collection_error_trials = 0
     for trajectory in items:
         category = classify_trajectory(trajectory)
         category_counts[category] += 1
         by_task[trajectory.task_id][category] += 1
+        verifier = _verifier_summary(trajectory)
+        declared_trials += bool(verifier["graded_targets_declared"])
+        resolved_trials += bool(verifier["fail_to_pass_resolved"])
+        regressed_trials += bool(verifier["pass_to_pass_regressed"])
+        collection_error_trials += bool(verifier["collection_error"])
         summaries.append(
             {
                 "trajectory_id": trajectory.trajectory_id,
@@ -85,6 +94,7 @@ def build_failure_report(trajectories: Iterable[Trajectory]) -> dict[str, Any]:
                 "tool_calls": trajectory.reward.tool_calls,
                 "changed_file_count": len(trajectory.changed_files),
                 "violations": list(trajectory.reward.violations),
+                **verifier,
             }
         )
     return {
@@ -102,8 +112,37 @@ def build_failure_report(trajectories: Iterable[Trajectory]) -> dict[str, Any]:
             task_id: dict(sorted(counts.items()))
             for task_id, counts in sorted(by_task.items())
         },
+        "graded_failure_attribution": {
+            "trials_with_declared_targets": declared_trials,
+            "trials_with_any_fail_to_pass_resolved": resolved_trials,
+            "trials_with_pass_to_pass_regression": regressed_trials,
+            "trials_with_collection_error": collection_error_trials,
+        },
         "trajectories": summaries,
         "contains_raw_model_or_repository_content": False,
+    }
+
+
+def _verifier_summary(trajectory: Trajectory) -> dict[str, Any]:
+    """Node-level verifier attribution, with explicit unknowns instead of fake zeros."""
+
+    verifier = trajectory.verifier
+    if verifier is None:
+        return {
+            "graded_targets_declared": False,
+            "fail_to_pass_total": 0,
+            "fail_to_pass_resolved": None,
+            "pass_to_pass_total": 0,
+            "pass_to_pass_regressed": None,
+            "collection_error": False,
+        }
+    return {
+        "graded_targets_declared": verifier.node_targets_declared,
+        "fail_to_pass_total": verifier.fail_to_pass_total,
+        "fail_to_pass_resolved": verifier.fail_to_pass_resolved,
+        "pass_to_pass_total": verifier.pass_to_pass_total,
+        "pass_to_pass_regressed": verifier.pass_to_pass_regressed,
+        "collection_error": verifier.collection_error,
     }
 
 

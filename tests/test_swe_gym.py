@@ -144,7 +144,7 @@ class SWEGymAdapterTests(unittest.TestCase):
         bundle = SWEGymTaskAdapter().adapt(
             _sample_row(),
             split=DatasetSplit.DEVELOPMENT,
-            test_command=("python", "-m", "pytest", "-q", "tests/test_bug.py::test_decimal"),
+            test_command=audited_swe_gym_test_command(_sample_row()),
         )
 
         self.assertIsNone(bundle.task.fixture_path)
@@ -175,13 +175,34 @@ class SWEGymAdapterTests(unittest.TestCase):
 
     def test_jsonl_loader_accepts_audited_enriched_rows(self) -> None:
         row = _sample_row()
-        row["test_command"] = ["python", "-m", "pytest", "-q", "tests/test_bug.py::test_decimal"]
+        row["test_command"] = list(audited_swe_gym_test_command(row))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "swe-gym.jsonl"
             path.write_text(json.dumps(row) + "\n", encoding="utf-8")
             bundles = load_swe_gym_jsonl(path, split=DatasetSplit.HELD_OUT)
         self.assertEqual(len(bundles), 1)
         self.assertEqual(bundles[0].task.split, DatasetSplit.HELD_OUT)
+
+    def test_command_that_drops_a_graded_target_is_rejected(self) -> None:
+        with self.assertRaisesRegex(SWEGymAdapterError, "does not score every declared graded target"):
+            SWEGymTaskAdapter().adapt(
+                _sample_row(),
+                split=DatasetSplit.DEVELOPMENT,
+                test_command=("python", "-m", "pytest", "-q", "tests/test_bug.py::test_decimal"),
+            )
+
+    def test_command_that_scores_undeclared_tests_is_rejected(self) -> None:
+        with self.assertRaisesRegex(SWEGymAdapterError, "outside FAIL_TO_PASS and PASS_TO_PASS"):
+            SWEGymTaskAdapter().adapt(
+                _sample_row(),
+                split=DatasetSplit.DEVELOPMENT,
+                test_command=(
+                    "python", "-m", "pytest", "-q",
+                    "tests/test_bug.py::test_decimal",
+                    "tests/test_existing.py::test_regression",
+                    "tests/test_other.py::test_unrelated",
+                ),
+            )
 
 
 if __name__ == "__main__":

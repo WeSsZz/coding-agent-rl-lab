@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass
+from typing import Sequence
 
-from .contracts import TestResult
+from .contracts import TestResult, VerifierBreakdown
 
 
 _FAILED_NODE_RE = re.compile(r"^FAILED\s+([^\s]+)", re.MULTILINE)
 _FAILED_COUNT_RE = re.compile(r"(\d+)\s+failed\b")
+_COLLECTION_ERROR_RE = re.compile(r"\b[1-9]\d* errors?\b|ERROR collecting")
 REWARD_VERSIONS = ("legacy-v1", "conservative-v2")
 
 
@@ -30,6 +32,72 @@ def verifier_failure_count(result: TestResult | None) -> int | None:
     return counts[-1] if counts else None
 
 
+def verifier_collection_error(result: TestResult | None) -> bool:
+    """True when the run failed while collecting tests, so no per-test result exists."""
+
+    if result is None:
+        return False
+    return bool(_COLLECTION_ERROR_RE.search(f"{result.stdout}\n{result.stderr}"))
+
+
+def _matches_target(node: str, target: str) -> bool:
+    return node == target or node.startswith(f"{target}[")
+
+
+def verifier_breakdown(
+    result: TestResult | None,
+    *,
+    fail_to_pass: Sequence[str] = (),
+    pass_to_pass: Sequence[str] = (),
+) -> VerifierBreakdown | None:
+    """Map one verifier run onto the declared FAIL_TO_PASS and PASS_TO_PASS nodes."""
+
+    if result is None:
+        return None
+    fail_to_pass = tuple(fail_to_pass)
+    pass_to_pass = tuple(pass_to_pass)
+    declared = bool(fail_to_pass or pass_to_pass)
+    if verifier_collection_error(result):
+        return VerifierBreakdown(
+            fail_to_pass_total=len(fail_to_pass),
+            pass_to_pass_total=len(pass_to_pass),
+            node_targets_declared=declared,
+            collection_error=True,
+        )
+    failed_nodes = tuple(sorted(verifier_failure_ids(result)))
+    if not declared:
+        return VerifierBreakdown(failed_nodes=failed_nodes)
+    if not result.passed and not failed_nodes:
+        # A non-zero exit without a per-test summary cannot be charged to any node.
+        return VerifierBreakdown(
+            fail_to_pass_total=len(fail_to_pass),
+            pass_to_pass_total=len(pass_to_pass),
+            node_targets_declared=True,
+        )
+    graded_targets = (*fail_to_pass, *pass_to_pass)
+    return VerifierBreakdown(
+        fail_to_pass_total=len(fail_to_pass),
+        pass_to_pass_total=len(pass_to_pass),
+        fail_to_pass_resolved=sum(
+            1
+            for target in fail_to_pass
+            if not any(_matches_target(node, target) for node in failed_nodes)
+        ),
+        pass_to_pass_regressed=sum(
+            1
+            for node in failed_nodes
+            if any(_matches_target(node, target) for target in pass_to_pass)
+        ),
+        failed_nodes=failed_nodes,
+        ungraded_failed_nodes=tuple(
+            node
+            for node in failed_nodes
+            if not any(_matches_target(node, target) for target in graded_targets)
+        ),
+        node_targets_declared=True,
+    )
+
+
 @dataclass(frozen=True)
 class TrainingReward:
     strict_success: bool
@@ -44,6 +112,7 @@ class TrainingReward:
     strict_reward: float
     training_reward: float
     reward_version: str = "legacy-v1"
+    verifier: VerifierBreakdown | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -58,6 +127,8 @@ def build_training_reward(
     verifier_run_after_patch: bool,
     violations: tuple[str, ...],
     reward_version: str = "legacy-v1",
+    fail_to_pass: Sequence[str] = (),
+    pass_to_pass: Sequence[str] = (),
 ) -> TrainingReward:
     if reward_version not in REWARD_VERSIONS:
         raise ValueError("unknown training reward version")
@@ -98,7 +169,7 @@ def build_training_reward(
             and baseline_ids and final_ids
             and new_failure_count == 0
             and patch_valid and verifier_run_after_patch
-            and not re.search(r"\b[1-9]\d* errors?\b|ERROR collecting", final.stdout + "\n" + final.stderr)
+            and not verifier_collection_error(final)
         )
         training_reward = (
             round(0.03 + (0.25 * resolved_count / baseline_count + 0.10 if resolved_count else 0.0), 4)
@@ -128,4 +199,9 @@ def build_training_reward(
         strict_reward=float(strict_success),
         training_reward=training_reward,
         reward_version=reward_version,
+        verifier=verifier_breakdown(
+            final,
+            fail_to_pass=fail_to_pass,
+            pass_to_pass=pass_to_pass,
+        ),
     )

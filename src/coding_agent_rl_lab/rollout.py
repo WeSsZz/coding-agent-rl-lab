@@ -6,9 +6,18 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .contracts import CodingTask, PolicyDecision, RewardVector, TestResult, Trajectory, TrajectoryStep
+from .contracts import (
+    ActionKind,
+    CodingTask,
+    PolicyDecision,
+    RewardVector,
+    TestResult,
+    Trajectory,
+    TrajectoryStep,
+)
 from .policies import Policy
 from .providers import EnvironmentProvider
+from .reward_shaping import build_training_reward, verifier_breakdown
 
 
 class RolloutCollector:
@@ -19,6 +28,8 @@ class RolloutCollector:
         environment = self.environment_provider.create(task)
         steps: list[TrajectoryStep] = []
         terminal_test_result: TestResult | None = None
+        edited = False
+        verifier_run_after_patch = False
         try:
             initial_observation = environment.reset(task)
             baseline_passed = bool(environment.baseline_result and environment.baseline_result.passed)
@@ -34,7 +45,14 @@ class RolloutCollector:
                     if isinstance(raw_decision, PolicyDecision)
                     else PolicyDecision(action=raw_decision)
                 )
+                if edited and decision.action.kind in {ActionKind.RUN_TESTS, ActionKind.FINISH}:
+                    verifier_run_after_patch = True
                 result = environment.step(decision.action)
+                if (
+                    decision.action.kind in {ActionKind.REPLACE_TEXT, ActionKind.REPLACE_LINES}
+                    and result.observation.startswith("Updated ")
+                ):
+                    edited = True
                 steps.append(
                     TrajectoryStep(
                         sequence=len(steps) + 1,
@@ -56,10 +74,31 @@ class RolloutCollector:
             changed_files = environment.changed_files()
             policy_violations = tuple(step.violation for step in steps if step.violation)
             violations = tuple(dict.fromkeys((*environment.violations, *policy_violations)))
+            fail_to_pass, pass_to_pass = environment.graded_targets()
+            breakdown = verifier_breakdown(
+                final,
+                fail_to_pass=fail_to_pass,
+                pass_to_pass=pass_to_pass,
+            )
+            training_reward = build_training_reward(
+                baseline=environment.baseline_result,
+                final=final,
+                patch_created=bool(changed_files),
+                patch_valid=environment.patch_is_valid(),
+                verifier_run_after_patch=verifier_run_after_patch,
+                violations=violations,
+                reward_version="conservative-v2",
+                fail_to_pass=fail_to_pass,
+                pass_to_pass=pass_to_pass,
+            )
             reward = RewardVector(
                 task_success=final.passed and bool(changed_files) and not violations,
                 tests_passed=final.passed,
-                regression_free=final.passed,
+                regression_free=(
+                    final.passed
+                    if breakdown is None or not breakdown.comparable
+                    else breakdown.regression_free
+                ),
                 patch_created=bool(changed_files),
                 tool_calls=environment.tool_calls,
                 steps=len(steps),
@@ -77,6 +116,8 @@ class RolloutCollector:
                 baseline_tests_passed=baseline_passed,
                 final_tests_passed=final.passed,
                 initial_observation=initial_observation,
+                verifier=breakdown,
+                training_reward=training_reward.training_reward,
             )
         finally:
             environment.close()
@@ -131,6 +172,11 @@ def build_report(
         }
     successes = [trajectory.reward.task_success for trajectory in trajectories]
     scalar_rewards = [trajectory.reward.scalar for trajectory in trajectories]
+    training_rewards = [
+        trajectory.training_reward
+        for trajectory in trajectories
+        if trajectory.training_reward is not None
+    ]
     return {
         "schema_version": 1,
         "project_stage": (
@@ -153,6 +199,10 @@ def build_report(
             sum(scalar_rewards) / len(scalar_rewards),
             4,
         ) if scalar_rewards else 0.0,
+        "mean_training_reward": round(
+            sum(training_rewards) / len(training_rewards),
+            4,
+        ) if training_rewards else 0.0,
         "scalar_reward_sample_variance": _sample_variance(scalar_rewards),
         "violation_count": sum(len(item.reward.violations) for item in trajectories),
         "task_reliability": case_reliability,

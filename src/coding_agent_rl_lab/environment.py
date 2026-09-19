@@ -162,6 +162,8 @@ class CodingEnvironment(Protocol):
 
     def patch_is_valid(self) -> bool: ...
 
+    def graded_targets(self) -> tuple[tuple[str, ...], tuple[str, ...]]: ...
+
     def close(self) -> None: ...
 
 
@@ -353,6 +355,11 @@ class LocalFixtureEnvironment:
         except (OSError, SyntaxError, UnicodeError):
             return False
         return True
+
+    def graded_targets(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Fixtures grade whatever their own trusted test command covers."""
+
+        return (), ()
 
     def close(self) -> None:
         if self.workspace is not None and self.workspace.exists():

@@ -80,6 +80,7 @@ class SWEGymTaskAdapter:
             raise SWEGymAdapterError(
                 "SWE-Gym rows do not contain a portable test command; provide a versioned, repo-specific command"
             )
+        self._require_graded_targets(command, fail_to_pass, pass_to_pass)
         image = self.image_for_instance(instance_id)
         provenance = f"hf://datasets/{self.config.dataset_id}@{self.config.dataset_revision}"
         task = CodingTask(
@@ -141,6 +142,39 @@ class SWEGymTaskAdapter:
         if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
             raise SWEGymAdapterError("test_command must be a list of non-empty strings")
         return tuple(value)
+
+    @staticmethod
+    def _require_graded_targets(
+        command: tuple[str, ...],
+        fail_to_pass: tuple[str, ...],
+        pass_to_pass: tuple[str, ...],
+    ) -> None:
+        """Reject a command that does not score exactly the declared graded nodes.
+
+        A narrower command silently drops regression coverage, and a wider one turns
+        ungraded tests into a pass/fail signal. Either way the verifier would stop
+        meaning what the reward assumes, so both are refused before a rollout runs.
+        """
+
+        declared = set(fail_to_pass) | set(pass_to_pass)
+        arguments = command[command.index("--") + 1 :] if "--" in command else command[1:]
+        scored = {
+            argument
+            for argument in arguments
+            if argument in declared or "::" in argument
+        }
+        missing = sorted(declared - scored)
+        if missing:
+            raise SWEGymAdapterError(
+                "test_command does not score every declared graded target: "
+                + ", ".join(missing[:3])
+            )
+        undeclared = sorted(scored - declared)
+        if undeclared:
+            raise SWEGymAdapterError(
+                "test_command scores tests outside FAIL_TO_PASS and PASS_TO_PASS: "
+                + ", ".join(undeclared[:3])
+            )
 
 
 def audited_swe_gym_test_command(row: dict[str, Any]) -> tuple[str, ...]:

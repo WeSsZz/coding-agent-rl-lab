@@ -40,6 +40,7 @@ class DockerIntegrationTests(unittest.TestCase):
     def test_real_fail_before_patch_pass_after_and_cleanup(self) -> None:
         image = f"coding-agent-rl-lab-smoke:{uuid.uuid4().hex[:12]}"
         container_name: str | None = None
+        base_image = os.environ.get("DOCKER_INTEGRATION_BASE_IMAGE", "python:3.11-slim")
 
         with tempfile.TemporaryDirectory(prefix="coding-agent-docker-smoke-") as temporary_directory:
             context = Path(temporary_directory)
@@ -57,9 +58,15 @@ class DockerIntegrationTests(unittest.TestCase):
             base_commit = self._git(repository, "rev-parse", "HEAD").stdout.strip()
 
             (context / "Dockerfile").write_text(
-                "FROM python:3.11-slim\n"
-                "RUN apt-get update && apt-get install -y --no-install-recommends git "
-                "&& rm -rf /var/lib/apt/lists/*\n"
+                f"FROM {base_image}\n"
+                + (
+                    "WORKDIR /tmp\n"
+                    "RUN git --version && rm -rf /testbed && mkdir /testbed\n"
+                    if "DOCKER_INTEGRATION_BASE_IMAGE" in os.environ
+                    else "RUN apt-get update && apt-get install -y --no-install-recommends git "
+                    "&& rm -rf /var/lib/apt/lists/*\n"
+                )
+                +
                 "WORKDIR /testbed\n"
                 "COPY repo/ /testbed/\n",
                 encoding="utf-8",
@@ -92,7 +99,7 @@ class DockerIntegrationTests(unittest.TestCase):
             try:
                 observation = environment.reset(task)
                 container_name = environment.container_name
-                self.assertIn("Baseline tests fail", observation)
+                self.assertIn("Tests failed", observation)
                 self.assertFalse(environment.baseline_result.passed)
 
                 changed = environment.step(

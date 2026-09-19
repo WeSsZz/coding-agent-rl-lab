@@ -56,7 +56,7 @@ def file_hash(path: Path) -> str:
 
 def validate_resume(previous: dict[str, Any], expected: dict[str, Any], task_ids: set[str]) -> None:
     for key in ("adapter_path", "adapter_sha256", "model_path", "prompt_rows_sha256", "seed", "budget", "planned_trial_count", "navigation_first", "navigation_policy"):
-        if previous.get(key) != expected[key]:
+        if previous.get(key) != expected.get(key):
             raise ValueError(f"incompatible resume field: {key}")
     saved_ids = [entry["task_id"] for entry in previous["tasks"]]
     if len(saved_ids) != len(set(saved_ids)) or not set(saved_ids) <= task_ids:

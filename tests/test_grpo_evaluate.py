@@ -17,6 +17,15 @@ class DirectionEvaluationTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 validate_resume({**manifest, key: value}, manifest, {"train-task"})
 
+    def test_resume_rejects_legacy_manifest_when_navigation_mode_is_now_explicit(self):
+        legacy = {"adapter_path": "/adapter", "adapter_sha256": "abc", "model_path": "/model",
+                  "prompt_rows_sha256": "def", "seed": 81000,
+                  "budget": {"num_generations": 2}, "planned_trial_count": 16,
+                  "tasks": [{"task_id": "train-task"}]}
+        expected = {**legacy, "navigation_first": False, "navigation_policy": None}
+        with self.assertRaisesRegex(ValueError, "navigation_first"):
+            validate_resume(legacy, expected, {"train-task"})
+
     def test_split_is_fixed_and_held_out_is_rejected(self):
         rows = [{"task_id": item.instance_id} for item in pinned_rows_for_task_set("all")]
         self.assertEqual(len(select_rows(rows, "train")), 6)

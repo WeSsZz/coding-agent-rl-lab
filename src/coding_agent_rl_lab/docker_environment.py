@@ -452,11 +452,30 @@ if matches:
     output.extend(nav)
 else:
     output = [f'No exact matches for: {query}']
-    tokens = sorted({token for token in query.split() if len(token) >= 4}, key=len, reverse=True)
-    for token in tokens[:1]:
+    # A phrase query is retried on its longest word, which is what reaches an identifier. A
+    # path-like query needs the other treatment: the whole path is one whitespace token, so
+    # retrying it repeats the miss, while its basename and its later segments are names the
+    # listing can answer - `moto/config/server.py` does not exist and `server.py` does.
+    if '/' in query:
+        stripped = query.strip().strip('"\\'`')
+        parts = [part for part in stripped.split('/') if part]
+        attempts = []
+        if parts:
+            name = parts[-1]
+            if len(name) >= 4:
+                attempts.append((name, f'Basename of the query: {name}'))
+            for part in reversed(parts[:-1]):
+                if len(part) >= 4:
+                    attempts.append((part, f'Path segment of the query: {part}'))
+    else:
+        tokens = sorted(
+            {token for token in query.split() if len(token) >= 4}, key=len, reverse=True
+        )
+        attempts = [(token, f'Longest token in the query: {token}') for token in tokens[:1]]
+    for token, label in attempts:
         token_matches = collect(token, files, PER_FILE_LIMIT)
         if token_matches:
-            output.append(f'Longest token in the query: {token}')
+            output.append(label)
             shown = token_matches[:FALLBACK_LIMIT]
             nav = navigation_lines(query, shown, files)
             reserved = sum(len(line) + 1 for line in nav)
@@ -653,6 +672,14 @@ selected = ''.join(lines[start_line - 1:end_line])
 if new and selected.endswith('\\n') and not new.endswith(('\\n', '\\r')):
     new += '\\n'
 updated = ''.join(lines[:start_line - 1]) + new + ''.join(lines[end_line:])
+if updated == content:
+    print(
+        f'replace_lines would not change {path}: the replacement is identical to the lines it '
+        'replaces. This edit is refused instead of reported as applied, so change the code those '
+        'lines contain.',
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 if path.suffix == '.py':
     try:
         compile(updated, str(path), 'exec')
@@ -797,6 +824,13 @@ for raw in sys.argv[1:]:
                     raise EnvironmentError(f"cannot modify verifier-owned test file: {path}")
                 old = self._required_string(action.arguments, "old")
                 new = self._required_string(action.arguments, "new", allow_empty=True)
+                if old == new:
+                    raise ToolError(
+                        f"replace_text would not change {path}: `new` is identical to `old`. "
+                        "This edit is refused instead of reported as applied, so pick the "
+                        "statement that produces the failing value and replace it with corrected "
+                        "code, or use replace_lines on the range read_file showed."
+                    )
                 result = self._exec(("python", "-c", self._REPLACE_TEXT_SCRIPT, path, old, new))
                 self._require_command(result, "replace_text")
                 self._changed_files.add(path)
@@ -999,7 +1033,12 @@ for raw in sys.argv[1:]:
     @staticmethod
     def _require_command(result: CommandExecution, action: str) -> None:
         if not result.passed:
-            raise ToolError(f"{action} failed: {result.stderr or result.stdout}")
+            # The container scripts already phrase a refused no-op as a policy instruction; the
+            # generic `failed: <stderr>` wrapper would bury it behind a subprocess step.
+            detail = result.stderr or result.stdout
+            if "would not change" in detail:
+                raise ToolError(detail.strip())
+            raise ToolError(f"{action} failed: {detail}")
 
     def _bounded_listing(self, content: str) -> str:
         return self._bounded_observation(

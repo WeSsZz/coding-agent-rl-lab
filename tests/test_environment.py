@@ -81,6 +81,51 @@ class EnvironmentTests(unittest.TestCase):
             self.assertTrue(result.test_result.passed)
             self.assertEqual(environment.changed_files(), ("calculator.py",))
 
+    def test_replace_text_refuses_an_edit_that_would_not_change_the_file(self) -> None:
+        with LocalFixtureEnvironment(self.root) as environment:
+            environment.reset(self.task)
+            environment.step(AgentAction(ActionKind.READ_FILE, {"path": "calculator.py"}))
+
+            result = environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_TEXT,
+                    {
+                        "path": "calculator.py",
+                        "old": "return list(range(start, end))",
+                        "new": "return list(range(start, end))",
+                    },
+                )
+            )
+
+            self.assertTrue(result.observation.startswith("Tool error:"))
+            self.assertIn("would not change", result.observation)
+            # A no-op used to be reported as `Updated ...`, which marked the trial as patched and
+            # spent a step without moving the failure.
+            self.assertEqual(environment.changed_files(), ())
+
+    def test_replace_lines_refuses_a_range_rewritten_with_its_own_text(self) -> None:
+        with LocalFixtureEnvironment(self.root) as environment:
+            environment.reset(self.task)
+            environment.step(AgentAction(ActionKind.READ_FILE, {"path": "calculator.py"}))
+            current = (environment.repository / "calculator.py").read_text(encoding="utf-8")
+            line = current.splitlines()[3]
+
+            result = environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_LINES,
+                    {
+                        "path": "calculator.py",
+                        "start_line": 4,
+                        "end_line": 4,
+                        "new": line,
+                    },
+                )
+            )
+
+            self.assertTrue(result.observation.startswith("Tool error:"))
+            self.assertIn("would not change", result.observation)
+            self.assertEqual(environment.changed_files(), ())
+
     def test_replace_lines_updates_a_previously_read_source_range(self) -> None:
         with LocalFixtureEnvironment(self.root) as environment:
             environment.reset(self.task)
@@ -680,16 +725,32 @@ class SearchRepositoryTests(unittest.TestCase):
             ],
         )
 
-    def test_unmatched_query_without_a_long_token_suggests_a_path(self) -> None:
+    def test_a_missed_path_query_is_retried_on_its_segments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "moto" / "config").mkdir(parents=True)
+            (root / "moto" / "models.py").write_text("value = 1\n", encoding="utf-8")
+
+            rendered = search_repository(root, "moto/config/server.py")
+
+        # The whole path is one whitespace token, so the old single retry searched for the path
+        # again and found the same nothing. Retrying its parts is what turns the miss into a real
+        # hit on the file the query was groping for.
+        self.assertIn("No exact matches for: moto/config/server.py", rendered)
+        self.assertIn("PATH_MATCH:moto/models.py", rendered)
+
+    def test_a_missed_query_with_no_answerable_segment_reports_only_the_miss(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "moto").mkdir()
             (root / "moto" / "models.py").write_text("value = 1\n", encoding="utf-8")
 
-            rendered = search_repository(root, "moto/models/__init__.py")
+            rendered = search_repository(root, "absent/thing.py")
 
-        self.assertIn("No exact matches for: moto/models/__init__.py", rendered)
-        self.assertIn("SUGGESTED_PATH:moto/models.py", rendered)
+        # Nothing in the listing answers any segment of this query, so there is no evidence to
+        # offer and the miss is reported on its own rather than padded with unrelated paths.
+        self.assertEqual(rendered.splitlines()[0], "No exact matches for: absent/thing.py")
+        self.assertNotIn("PATH_MATCH:", rendered)
 
     def test_long_match_lists_keep_the_top_matches_and_say_what_was_cut(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

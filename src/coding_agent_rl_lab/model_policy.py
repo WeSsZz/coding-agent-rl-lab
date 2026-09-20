@@ -26,6 +26,11 @@ PROMPT_VERSION = "coding-tools-json-v24"
 #: server would rather than discovering the overflow as an HTTP 400 mid-episode.
 PROMPT_CHARS_PER_TOKEN = 3
 
+#: Seed stride between protocol retries. A recovered episode re-samples instead of replaying the
+#: same completion: a completion cut off at `max_tokens` is deterministic under a fixed seed, so
+#: retrying with the parent seed would record the identical truncation twice and end the episode.
+RETRY_SEED_STRIDE = 1009
+
 
 class ModelTransportError(RuntimeError):
     pass
@@ -258,19 +263,27 @@ class OpenAICompatiblePolicy:
         errors: list[str] = []
         output_text: str | None = None
         violation = "policy_protocol_error"
+        # A refused episode is the one that most needs `finish_reason`: "not valid JSON" cannot be
+        # told apart from a completion cut off at max_tokens unless the failed response keeps it.
+        last_response_metadata: dict[str, Any] = {}
 
         for attempt in range(1, self.config.max_attempts + 1):
             started = time.monotonic()
+            # A retry that repeats the parent seed re-samples the same truncated or malformed
+            # completion, so every attempt advances the seed by a fixed stride. The stride is
+            # recorded, which is what makes two otherwise identical attempts distinguishable.
+            attempt_seed = None if seed is None else seed + (attempt - 1) * RETRY_SEED_STRIDE
             try:
                 response = self.transport.post_json(
                     self.config.chat_completions_url,
-                    self._payload(messages, seed),
+                    self._payload(messages, attempt_seed),
                     headers=self._headers(),
                     timeout_seconds=self.config.timeout_seconds,
                 )
                 latency_ms = round((time.monotonic() - started) * 1000, 3)
                 output_text, response_metadata = self._response_content(response)
-                action = self._parse_action(output_text)
+                last_response_metadata = response_metadata
+                action = self._parse_action(output_text, response_metadata.get("finish_reason"))
                 return PolicyDecision(
                     action=action,
                     input_messages=messages,
@@ -280,6 +293,7 @@ class OpenAICompatiblePolicy:
                         "attempt": attempt,
                         "latency_ms": latency_ms,
                         "seed": seed,
+                        "attempt_seed": attempt_seed,
                         "prompt_token_estimate": prompt_tokens,
                     },
                 )
@@ -290,23 +304,34 @@ class OpenAICompatiblePolicy:
                 violation = "policy_protocol_error"
                 errors.append(str(exc))
                 if output_text and attempt < self.config.max_attempts:
+                    if "truncated at max_tokens" in str(exc):
+                        correction = (
+                            f"The response was invalid: {exc}. The previous attempt was cut off "
+                            "mid-JSON, so do not resend it: emit a single small action whose "
+                            "`replace_text` `old`/`new` are under 20 lines each, or use "
+                            "`replace_lines` with the start_line/end_line a read_file printed. "
+                            "Return exactly one valid JSON action object."
+                        )
+                    else:
+                        correction = (
+                            f"The response was invalid: {exc}. "
+                            "Return exactly one valid JSON action object."
+                        )
                     messages = (
                         *messages,
                         {"role": "assistant", "content": output_text},
-                        {
-                            "role": "user",
-                            "content": (
-                                f"The response was invalid: {exc}. "
-                                "Return exactly one valid JSON action object."
-                            ),
-                        },
+                        {"role": "user", "content": correction},
                     )
-
         return PolicyDecision(
             action=AgentAction(ActionKind.FINISH),
             input_messages=messages,
             output_text=output_text,
-            metadata={"attempts": self.config.max_attempts, "errors": errors, "seed": seed},
+            metadata={
+                "attempts": self.config.max_attempts,
+                "errors": errors,
+                "seed": seed,
+                **last_response_metadata,
+            },
             violation=violation,
         )
 
@@ -367,10 +392,16 @@ class OpenAICompatiblePolicy:
         return content, metadata
 
     @staticmethod
-    def _parse_action(content: str) -> AgentAction:
+    def _parse_action(content: str, finish_reason: str | None = None) -> AgentAction:
         try:
             value = json.loads(content)
         except json.JSONDecodeError as exc:
+            if finish_reason == "length":
+                raise ModelProtocolError(
+                    "model response was truncated at max_tokens before the JSON object closed; "
+                    "a large replace_text `old`/`new` block is the usual cause, so shrink the "
+                    "edit or use replace_lines on the range read_file showed"
+                ) from exc
             raise ModelProtocolError("model content is not valid JSON") from exc
         if not isinstance(value, dict):
             raise ModelProtocolError("model action must be a JSON object")

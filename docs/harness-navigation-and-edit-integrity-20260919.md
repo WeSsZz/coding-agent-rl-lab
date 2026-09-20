@@ -420,3 +420,221 @@ schemas are unchanged, so older artifacts still load.
   refusal, so the stored rollouts carry the target-selection and repair signal that the prompt
   alone did not supply; a warm start that has seen the shape of a route-and-handler fix is the
   cheapest test of the bullet above.
+
+## Why the `sftv24` arm lost 4 of 8 trials to `policy_protocol_error` (2026-09-20)
+
+The warm start removed the premature `finish` and cost 4 of 8 trials to protocol errors. Dumping
+the failing trials names the cause, and it is not the token budget, the checkpoint, or the data
+mix that the pause note proposed to choose between.
+
+**What the four trials actually emitted.** Every one of them ended on a `replace_text` whose `old`
+was the *verbatim numbered `read_file` output*, including the observation's own trailing
+`[read_file lines A-B: file has N lines; continue with read_file start_line=...]` marker:
+
+```
+{"kind":"replace_text","arguments":{"path":"moto/autoscaling/models.py",
+ "old":"et_tracking_config\n107:         self.step_adjustments = step_adjustments\n108: ...
+   [read_file lines 104-281: character budget reached; file has 1701 lines; continue with ...]\n",
+ "new":"..."}}
+```
+
+That action is unusable twice over. `replace_text` matches `old` byte for byte against the file, so
+a numbered copy can never match - `model_policy.py` rule 493 already tells the policy to copy
+`old` from the numbered output, and `docker_environment.py` already refuses a numbered `old` with a
+directive naming the `replace_lines` range. And the block is roughly the whole file: seed `140001`
+aimed one `replace_text` at `moto/autoscaling/models.py`, 1701 lines, slice 104-281 alone.
+
+**It is truncation, but the budget is not the lever.** The four raws end mid-string with two
+unclosed braces, so they were cut off at `max_tokens`. Raising the budget only moves the cut:
+
+| arm (same task, same 8 seeds) | `max_tokens` | pass | tests | trials with a source edit | protocol errors | longest raw | `mean_training_reward` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| base model, `v24` prompt | 1024 | 0/8 | 0/8 | 6/8 | 0 | 792 chars | -0.1062 |
+| `sftv24` adapter | 1024 | 0/8 | 0/8 | 1/8 | 4/8 | 3639 chars | -0.4963 |
+| `sftv24` adapter | 4096 | 0/8 | 0/8 | 2/8 | 2/8 | 14070 chars | -0.2425 |
+
+At 4096 the two surviving failures emit 13976 and 14070 characters - still cut off, and still
+aimed at whole files. The base model never crosses 792 characters on the same task, so this is the
+adapter's learned output shape, not a ceiling the task forces. 4096 is also the practical maximum
+for this server, and the limit is the context, not the GPU: the prompt grows to ~17464 and then
+~22313 tokens, so `max_tokens=16384` and `max_tokens=12000` were refused by the context preflight
+after one trial, and `max_tokens=8192` - which does fit - died on a request timeout because the
+completion took longer to stream than the transport allows. Raising the budget is therefore not an
+available lever at all.
+
+**The training data taught the right shape, against the wrong observation format.** All 51
+`replace_text` targets in `swe-gym-train-gold-sft-v24.jsonl` are clean unnumbered fragments -
+`old` median 509 chars, max 993, and none of them carry observation line numbers. The observations
+are present too, as `history` entries inside the single user payload, and the `search_text`
+observation is already in the live format (`moto/acm/models.py:409:self._certificates: ...`, which
+is exactly what `_collect_search_matches` renders). The defect is the `read_file` observation: the
+builder passed the bare hunk text (`swe_gym_sft.py`, `TrajectoryStep(2, read_action,
+hunk.old_text, ...)`), so the adapter's context showed unnumbered source - while the live tool
+returns numbered lines plus a `[read_file lines A-B: ...]` footer, and `render_numbered_window`
+documents that numbering as the thing that "lets a policy derive `replace_text` and
+`replace_lines` arguments from an observation". Across the whole dataset that is 510 observations,
+**0** of them numbered, **0** carrying the footer.
+
+An `edit` example whose history shows bare source next to a target `old` of that same bare source
+teaches the copy, not the derivation. Fine-tuning then amplifies it: the adapter copies whatever
+the observation contains, and at inference the observation contains line numbers. The base model
+never learned the copy, which is why it stays at 792 characters and still reaches 6 of 8 edits.
+
+### The fix works: rebuild the dataset and the adapter recovers
+
+`swe_gym_sft.py` now renders the `edit` stage's `read_file` history entry with
+`render_numbered_window`, the same function the live tool uses. The rebuilt dataset
+(`work/private/swe-gym-train-gold-sft-v25.jsonl`, `sha256 40e6a0d5...`, 204 examples) differs from
+`v24` in exactly one respect: **102 of 102** `read_file` history observations carry line numbers,
+against **0 of 102** before. The target actions, stage counts, example ids and prompt sizes are
+byte-identical, so nothing about what the model must predict changed - only what it is shown.
+
+A 60-step warm start on the same base, same seed `62001`, same hyper-parameters, then the same
+8-seed held-out arm at `--max_tokens 4096`:
+
+| arm | pass | tests | seeds with a changed file | applied edits | refused edits | protocol errors | longest raw | `mean_training_reward` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| base model, `v24` prompt | 0/8 | 0/8 | 6/8 | - | - | 0 | 792 ch | -0.1062 |
+| `sftv24` adapter (bare read observation) | 0/8 | 0/8 | 2/8 | 7 | 27 | 2 | 14070 ch | -0.2425 |
+| `sftv25` adapter (numbered read observation) | 0/8 | 0/8 | **7/8** | **26** | **15** | **1** | 14425 ch | **-0.1062** |
+
+The copy defect was the whole regression. Applied edits go from 7 to 26, seeds that reach a source
+edit from 2 of 8 to 7 of 8, and `mean_training_reward` recovers from `-0.2425` to `-0.1062` - exactly
+the base model's number, so the warm start no longer costs anything on this task. The one
+surviving protocol error (`170001`) still hits the truncation path.
+
+`pass_at_1` stays 0. The remaining gap is no longer "can it produce a valid edit" but "does it edit
+the right thing": the trials now land in the wrong file, and `170001` is the only seed still
+losing an episode to the protocol rather than to its choice of target.
+
+**Harness fixes landed with this analysis** (`model_policy.py`, `swe_gym_sft.py`,
+`tests/test_model_policy.py`, `tests/test_swe_gym_sft.py`):
+
+- The dataset builder renders the `edit` stage's `read_file` history entry with
+  `render_numbered_window`, the same function the live tool uses, so the numbering conversion is
+  in the training distribution instead of being a format the adapter meets for the first time at
+  inference. Two tests pin it: the observation must be numbered, and the target `old` must not
+  appear in the history verbatim.
+- A protocol retry now advances the parent seed by `RETRY_SEED_STRIDE`. Under a fixed seed a
+  completion cut off at `max_tokens` is deterministic, so both attempts replayed the identical
+  truncation - which is why every failing trial records the same error string twice. `attempt_seed`
+  is recorded, so a replayed attempt is visible in the trajectory.
+- `finish_reason="length"` is now reported as truncation at `max_tokens` rather than collapsed into
+  "model content is not valid JSON", and the retry message asks for a smaller edit instead of a
+  generic re-ask.
+- A refused episode keeps the failed response's `finish_reason` and `usage`. They were dropped on
+  the failure path, which is why the arm above had to be diagnosed from raw text length.
+
+**Next.** The numbering fix is verified, so stop looking at the warm start and look at target
+selection: 7 of 8 trials now apply a real edit and 0 of 8 pass the verifier, which is a
+"wrong file / wrong hunk" gap rather than a protocol one. Read the verifier output of the `sftv25`
+trials in `remote-artifacts/swe-gym-sftv25-maxtok4096-held-out-14b-32k-t08-trajectories.jsonl`
+next, and decide whether the missing evidence is in the failure summary or in the prompt's
+locate-to-edit transition. Do not spend GPU on checkpoint-20 or a protocol-heavy data mix.
+
+### What the `sftv25` arm actually gets wrong (2026-09-20, second pass)
+
+Running the repo's own taxonomy over the arm
+(`python -m coding_agent_rl_lab.failure_analysis`) gives 1 `policy_protocol_error`,
+1 `edit_action_failed` and **6 `patch_failed_verifier`**, with `fail_to_pass_resolved = 0` on every
+trial and the same verifier node failing in all of them
+(`tests/test_core/test_config.py::test_change_configuration_using_api`).
+
+**First finding: the environment accepted edits that changed nothing.** The model emits
+`replace_text` with `new` byte-identical to `old`, and `LocalFixtureEnvironment` only checked that
+`old` occurred exactly once - so `content.replace(old, new, 1)` wrote the file back unchanged,
+answered `Updated <path>.`, and set `_edited_since_verification = True`. A no-op was
+indistinguishable from a repair, both to the policy and to `changed_files()`:
+
+| seed | edits reported applied | of which changed nothing | actually changed the file |
+| --- | --- | --- | --- |
+| 140001 | 3 | 3 | 0 |
+| 150001 | 6 | 4 | 2 |
+| 160001 | 4 | 4 | 0 |
+| 170001 | 2 | 1 | 1 |
+| 190001 | 3 | 0 | 3 |
+| 200001 | 3 | 2 | 1 |
+| 210001 | 5 | 5 | 0 |
+
+26 "applied" edits were really 19 no-ops and **7 real changes**. Both environments now refuse a
+no-op `replace_text` (`old == new`) and a `replace_lines` whose range is rewritten with its own
+text, naming the refusal instead of claiming the file was updated.
+
+**Second finding: none of those 7 real edits lands in a file the gold patch touches.** The fix for
+`getmoto__moto-7393` is `moto/moto_api/_internal/{models,responses,urls}.py` - a new
+`GET/POST /moto-api/config` handler on the dashboard API that reads and writes
+`moto.core.config.default_user_config`. What the policy edited instead:
+
+| real edits | path | gold? |
+| --- | --- | --- |
+| 3 | `moto/core/models.py` | no |
+| 2 | `moto/config/urls.py` | no |
+| 1 | `moto/server.py` | no |
+| 1 | `moto/core/decorator.py` | no |
+
+`moto/moto_api` does not appear in a single observation across all eight trials. The failure text
+leads with a test file called `test_config.py` and a route `/moto-api/config`, and the policy reads
+"config" as the service directory `moto/config/` - a real, differently-shaped service that also has
+`urls.py`, `models.py` and `responses.py`. Its first query was `moto/config/server.py`, which
+misses and returns eight `SUGGESTED_PATH` lines that are all under `moto/config/` or `moto/`, so the
+very first observation confirms the wrong hypothesis. The search tool can reach the right file, but
+only for the right query:
+
+```
+query 'moto/config/server.py'  -> SUGGESTED_PATH:moto/config/urls.py, ... (no moto/moto_api)
+query 'moto-api/config'        -> Shorter query "moto-api" matches implementation files:
+                                  moto/moto_api/_internal/urls.py:2: "{0}/moto-api/": ...
+query 'Not yet implemented'    -> moto/moto_api/_internal/urls.py:11: return "Not yet implemented"
+```
+
+**Both of those working queries were already in the prompt.** The `swe_gym_rollout` initial
+observation is 6794 characters and carries `[failing statement]`, `[last error]` and
+`[string values in the failing frame] s = 'Not yet implemented'` - the literal that appears only in
+the gold file - and the `v24` system prompt says to use those literals. The policy searched a
+guessed filename instead.
+
+**Why it does not use them: the training observations are a different format.** The builder's
+`_training_initial_observation` is 172 characters and contains only
+`Baseline verifier result:\nTests failed (exit=1).\nFailing tests:\n<node>` - it omits
+`[failing statement]`, `[last error]` and `[string values in the failing frame]` entirely, and no
+`search_text` training observation carries `SUGGESTED_PATH`, `PATH_MATCH` or the
+`Shorter query "<segment>"` fallback. So the adapter was trained on 204 locate examples that say
+*which test failed* and never on the evidence that says *where the value comes from* - the same
+class of defect as the unnumbered `read_file` observation, one layer up. `search_text` history
+entries match the live `path:line:text` shape and the `read_file` entries are now faithful; the
+initial observation is the remaining synthetic placeholder.
+
+**Next.** Extend the fidelity fix to the initial observation, and make the search hint reachable
+for a query that misses: when a query has no exact match, its longest path-like segment is a
+candidate (`moto-api` above), and today that fallback only runs for a query that matched tests or
+documentation. Then re-run: the arm has 7 real edits in 8 trials against 24 steps of budget, so the
+cost of a wrong first query is most of the episode. Re-running the same arm with the no-op refusal
+in place is the cheapest control, because it turns 19 wasted steps into refusals that the loop
+guard can direct.
+
+**Determinism is not what a fixed seed suggests.** Two arms were run over the same eight seeds with
+byte-identical source, and only **2 of 8** trials reproduced: the other six differ in action
+sequence, step count and changed-file count by one to two edits. Seeded vLLM sampling is therefore
+not repeatable at this batch shape, so a single trial's `changed_files` or step count is not
+evidence, and every claim above rests on arm-level totals (2 of 8 against 7 of 8 seeds reaching a
+change, 7 against 26 applied edits) rather than on any one seed. Any A/B run on this stack needs
+the whole arm, and a paired per-seed reading is only meaningful where the gap exceeds that noise.
+
+### The no-op refusal is correct but does not move the task
+
+The two arms above were followed by a third over the same eight seeds with the no-op refusal live.
+19 no-ops that had been reported as `Updated ...` become 21 explicit refusals, and the count of
+edits that genuinely change a file rises from 7 to 9:
+
+| arm | tests passed | seeds reaching a change | real edits | no-ops accepted | no-ops refused | `mean_training_reward` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `sftv25`, no refusal | 0/8 | 7 | 7 | 19 | 0 | -0.1062 |
+| `sftv25`, refusal live | 0/8 | 6 | 9 | 0 | 21 | -0.1100 |
+| `sftv24` (before either fix) | 0/8 | 2 | 2 | 5 | 0 | -0.2425 |
+
+The reward is unchanged inside the noise above, and the guard does what it was written to do: the
+policy can no longer spend a step on an edit that changes nothing and be told it made progress.
+What it also shows is that the failure is no longer reachable from the harness side - 0 of the 9
+real edits lands in `moto/moto_api/_internal/`, in this arm or the previous one. The two levers
+that remain are the training-observation fidelity above and the initial search hint; neither is a
+scoring or environment rule, and both change only what the policy sees.

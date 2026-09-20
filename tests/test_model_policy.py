@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from coding_agent_rl_lab.contracts import AgentAction, ActionKind, CodingTask, DatasetSplit, TrajectoryStep
 from coding_agent_rl_lab.model_policy import (
+    RETRY_SEED_STRIDE,
     ModelTransportError,
     OpenAICompatiblePolicy,
     OpenAICompatiblePolicyConfig,
@@ -115,6 +116,65 @@ class OpenAICompatiblePolicyTests(unittest.TestCase):
         self.assertEqual(len(transport.calls), 2)
         second_messages = transport.calls[1][1]["messages"]
         self.assertIn("response was invalid", second_messages[-1]["content"])
+
+    def test_protocol_retry_advances_the_seed_so_it_can_escape_a_deterministic_truncation(self) -> None:
+        transport = FakeTransport([_response("not-json"), _response("not-json")])
+        policy = OpenAICompatiblePolicy(
+            OpenAICompatiblePolicyConfig(model="example/coder", max_attempts=2),
+            transport=transport,
+        )
+
+        policy.next_action(_task(), (), seed=5)
+
+        first_seed = transport.calls[0][1]["seed"]
+        second_seed = transport.calls[1][1]["seed"]
+        self.assertEqual(first_seed, 5)
+        self.assertNotEqual(first_seed, second_seed)
+        self.assertEqual(second_seed, 5 + RETRY_SEED_STRIDE)
+        self.assertIn("prompt_version", policy.manifest.metadata)
+
+    def test_truncated_completion_is_named_as_truncation_and_asks_for_a_smaller_edit(self) -> None:
+        truncated = _response('{"kind":"replace_text","arguments":{"path":"moto/a.py","old":"def f(')
+        truncated["choices"][0]["finish_reason"] = "length"
+        transport = FakeTransport([truncated, truncated])
+        policy = OpenAICompatiblePolicy(
+            OpenAICompatiblePolicyConfig(model="example/coder", max_attempts=2),
+            transport=transport,
+        )
+
+        decision = policy.next_action(_task(), (), seed=7)
+
+        self.assertEqual(decision.violation, "policy_protocol_error")
+        self.assertTrue(all("truncated at max_tokens" in err for err in decision.metadata["errors"]))
+        correction = transport.calls[1][1]["messages"][-1]["content"]
+        self.assertIn("truncated at max_tokens", correction)
+        self.assertIn("under 20 lines", correction)
+        self.assertIn("replace_lines", correction)
+
+    def test_a_stopped_completion_that_is_not_json_is_not_reported_as_truncation(self) -> None:
+        transport = FakeTransport([_response("not-json"), _response("not-json")])
+        policy = OpenAICompatiblePolicy(
+            OpenAICompatiblePolicyConfig(model="example/coder", max_attempts=2),
+            transport=transport,
+        )
+
+        decision = policy.next_action(_task(), (), seed=7)
+
+        self.assertTrue(all(err == "model content is not valid JSON" for err in decision.metadata["errors"]))
+
+    def test_a_refused_episode_still_records_the_failed_response_metadata(self) -> None:
+        truncated = _response('{"kind":"replace_text","arguments":{"path":"moto/a.py","old":"def f(')
+        truncated["choices"][0]["finish_reason"] = "length"
+        transport = FakeTransport([truncated, truncated])
+        policy = OpenAICompatiblePolicy(
+            OpenAICompatiblePolicyConfig(model="example/coder", max_attempts=2),
+            transport=transport,
+        )
+
+        decision = policy.next_action(_task(), (), seed=7)
+
+        self.assertEqual(decision.metadata["finish_reason"], "length")
+        self.assertEqual(decision.metadata["usage"]["total_tokens"], 120)
 
     def test_first_action_can_read_exact_path_from_initial_verifier_output(self) -> None:
         transport = FakeTransport(

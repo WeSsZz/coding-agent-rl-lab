@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 from .contracts import ActionKind, AgentAction, CodingTask, DatasetSplit, TrajectoryStep
+from .environment import render_numbered_window
 from .model_policy import PROMPT_VERSION, build_action_messages
 from .swe_gym_smoke import _download_pinned_rows, pinned_rows_for_task_set
 
@@ -274,7 +275,17 @@ def _hunk_examples(
     run_tests_action = AgentAction(ActionKind.RUN_TESTS)
 
     search_step = TrajectoryStep(1, search_action, search_observation, False)
-    read_step = TrajectoryStep(2, read_action, hunk.old_text, False)
+    # The observation has to be rendered exactly the way the live environment renders it, line
+    # numbers and closing footer included. A `read_file` observation is the only place the policy
+    # can see the numbering, so an `edit` target whose history shows bare unnumbered source is a
+    # target the model can copy verbatim - which is precisely the `old` a numbered observation
+    # must never become, and what a warm start trained this way does at inference time.
+    read_observation = render_numbered_window(
+        hunk.old_text,
+        None,
+        max_lines=max(range_end - range_start + 1, len(hunk.old_text.splitlines())),
+    )
+    read_step = TrajectoryStep(2, read_action, read_observation, False)
     replace_step = TrajectoryStep(3, replace_action, f"Updated {path}.", False)
     stages = (
         ("locate", (), search_action),

@@ -424,7 +424,37 @@ class DockerEnvironmentTests(unittest.TestCase):
             ],
         )
 
-    def test_search_text_suggests_close_path_for_obsolete_filename(self) -> None:
+    def test_search_text_retries_a_missed_path_query_on_its_segments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory, "moto/server.py")
+            source.parent.mkdir(parents=True)
+            source.write_text("def main():\n    pass\n", encoding="utf-8")
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-c",
+                    DockerSandboxEnvironment._SEARCH_TEXT_SCRIPT,
+                    "moto/config/server.py",
+                ),
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        # `moto/config/server.py` is one whitespace token and does not exist, so the old retry
+        # searched the same path again. The basename is a filename the listing can answer.
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(
+            completed.stdout.splitlines(),
+            [
+                "No exact matches for: moto/config/server.py",
+                "Basename of the query: server.py",
+                "PATH_MATCH:moto/server.py",
+            ],
+        )
+
+    def test_search_text_matches_the_package_file_when_the_module_path_is_wrong(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory, "moto/dynamodb/models/__init__.py")
             source.parent.mkdir(parents=True)
@@ -442,9 +472,11 @@ class DockerEnvironmentTests(unittest.TestCase):
                 check=False,
             )
 
+        # `moto/dynamodb/models.py` is not the module that exists; the segment retry reaches the
+        # package file by name, so the policy gets a real path instead of a fuzzy suggestion.
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("No exact matches for: moto/dynamodb/models.py", completed.stdout)
-        self.assertIn("SUGGESTED_PATH:moto/dynamodb/models/__init__.py", completed.stdout)
+        self.assertIn("PATH_MATCH:moto/dynamodb/models/__init__.py", completed.stdout)
 
     def test_read_file_script_numbers_a_selected_line_range(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -566,6 +598,32 @@ class DockerEnvironmentTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(updated, "one\nreplacement\nthree\n")
+
+    def test_replace_lines_script_refuses_a_range_rewritten_with_its_own_text(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "example.py")
+            original = "one\ntwo\nthree\n"
+            path.write_text(original, encoding="utf-8")
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-c",
+                    DockerSandboxEnvironment._REPLACE_LINES_SCRIPT,
+                    "example.py",
+                    "2",
+                    "2",
+                    "two",
+                ),
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            updated = path.read_text(encoding="utf-8")
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("would not change", completed.stderr)
+        self.assertEqual(updated, original)
 
     def test_replace_text_script_matches_the_local_mismatch_message(self) -> None:
         mismatches = (

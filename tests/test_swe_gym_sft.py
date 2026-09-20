@@ -92,6 +92,35 @@ class SWEGymSFTTests(unittest.TestCase):
         self.assertEqual(edit["kind"], "replace_text")
         self.assertIn("return value", edit["arguments"]["old"])
 
+    def test_edit_history_shows_the_numbered_read_file_observation_the_live_tool_returns(self) -> None:
+        examples, _ = build_train_gold_sft_dataset((_row(),))
+        edit_example = next(example for example in examples if example["stage"] == "edit")
+        payload = json.loads(edit_example["messages"][1]["content"])
+
+        read_observations = [
+            entry["observation"]
+            for entry in payload["history"]
+            if (entry.get("action") or {}).get("kind") == "read_file"
+        ]
+        self.assertEqual(len(read_observations), 1)
+        read_observation = read_observations[0]
+        # The policy can only learn to derive an unnumbered `old` if the observation it is shown
+        # carries the numbering the live `read_file` returns.
+        self.assertRegex(read_observation, r"(?m)^1: def calculate\(value\):")
+
+        old = edit_example["target_action"]["arguments"]["old"]
+        self.assertNotRegex(old, r"(?m)^\s*\d+:\s")
+        self.assertNotIn("[read_file lines", old)
+
+    def test_edit_history_does_not_present_the_target_old_text_as_an_observation(self) -> None:
+        examples, _ = build_train_gold_sft_dataset((_row(),))
+        edit_example = next(example for example in examples if example["stage"] == "edit")
+        old = edit_example["target_action"]["arguments"]["old"]
+        rendered = json.dumps(edit_example["messages"][1]["content"])
+
+        # A history observation identical to `old` is what a warm start learns to copy verbatim.
+        self.assertNotIn(json.dumps(old), rendered)
+
     def test_regression_and_held_out_rows_are_hard_rejected(self) -> None:
         held_out = PINNED_DEVELOPMENT_ROWS[-1]
         row = _row()

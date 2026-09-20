@@ -414,6 +414,69 @@ def _remaining_search_chars(hints: Sequence[str], max_chars: int) -> int:
     return max(max_chars // 2, max_chars - reserved)
 
 
+def fallback_query_segments(query: str, *, minimum: int = 4) -> tuple[str, ...]:
+    """The parts of a missed path-like query that are worth searching on their own.
+
+    A policy that misses with `moto/config/server.py` has named a path that does not exist but
+    whose basename does, and splitting on whitespace alone leaves it holding one token - the whole
+    path - so the single retry it is promised repeats the miss. The basename comes first because a
+    filename is the part of a mixed-up path most likely to be right, then the remaining segments
+    longest-first.
+    """
+
+    stripped = query.strip().strip("\"'`")
+    if not stripped or any(character.isspace() for character in stripped):
+        return ()
+    name = PurePosixPath(stripped).name
+    if "." not in name:
+        return ()
+    ordered = [name, *reversed(stripped.split("/")[:-1]), stripped]
+    segments: list[str] = []
+    for candidate in ordered:
+        if len(candidate) >= minimum and candidate not in segments:
+            segments.append(candidate)
+    return tuple(segments[:4])
+
+
+def _render_query_matches(
+    repository: Path,
+    query: str,
+    *,
+    listing: Sequence[str],
+    total_limit: int,
+    per_file_limit: int,
+    max_chars: int,
+) -> str | None:
+    """Render the matches for one query, or `None` when it has none.
+
+    This is the body of a search without its fallback, so a fallback retry can ask it for a second
+    query without re-entering the fallback and recursing.
+    """
+
+    matches = _collect_search_matches(
+        repository,
+        query,
+        listing=listing,
+        per_file_limit=per_file_limit,
+    )
+    if not matches:
+        return None
+    shown = matches[:total_limit]
+    hints = _navigation_lines(
+        repository,
+        query,
+        shown,
+        listing=listing,
+        per_file_limit=per_file_limit,
+    )
+    rendered = _bounded_search_lines(
+        [line for _, _, line in shown],
+        max_chars=_remaining_search_chars(hints, max_chars),
+    )
+    rendered.extend(hints)
+    return "\n".join(rendered)
+
+
 def search_repository(
     repository: Path,
     query: str,
@@ -435,58 +498,54 @@ def search_repository(
     """
 
     listing = repository_file_listing(repository)
-    matches = _collect_search_matches(
+    direct = _render_query_matches(
         repository,
         query,
         listing=listing,
+        total_limit=total_limit,
         per_file_limit=per_file_limit,
+        max_chars=max_chars,
     )
-    if matches:
-        shown = matches[:total_limit]
-        hints = _navigation_lines(
-            repository,
-            query,
-            shown,
-            listing=listing,
-            per_file_limit=per_file_limit,
-        )
-        rendered = _bounded_search_lines(
-            [line for _, _, line in shown],
-            max_chars=_remaining_search_chars(hints, max_chars),
-        )
-        rendered.extend(hints)
-        return "\n".join(rendered)
+    if direct is not None:
+        return direct
     rendered = [f"No exact matches for: {query}"]
-    tokens = sorted(
-        {token for token in query.split() if len(token) >= 4},
-        key=len,
-        reverse=True,
-    )
-    for token in tokens[:1]:
-        token_matches = _collect_search_matches(
+    # A phrase query is retried on its longest word, which is what reaches an identifier. A
+    # path-like query needs the other treatment: the whole path is one word, so the retry would
+    # repeat the miss, while its basename is a filename the listing branch can actually answer -
+    # `moto/config/server.py` does not exist and `server.py` does.
+    if "/" in query:
+        attempts = [
+            (
+                segment,
+                f"Basename of the query: {segment}"
+                if not index
+                else f"Path segment of the query: {segment}",
+            )
+            for index, segment in enumerate(fallback_query_segments(query))
+        ]
+    else:
+        attempts = [
+            (token, f"Longest token in the query: {token}")
+            for token in sorted(
+                {word for word in query.split() if len(word) >= 4},
+                key=len,
+                reverse=True,
+            )[:1]
+        ]
+    for token, label in attempts:
+        body = _render_query_matches(
             repository,
             token,
             listing=listing,
+            total_limit=fallback_limit,
             per_file_limit=per_file_limit,
+            max_chars=_remaining_search_chars([label], max_chars),
         )
-        if token_matches:
-            rendered.append(f"Longest token in the query: {token}")
-            shown = token_matches[:fallback_limit]
-            hints = _navigation_lines(
-                repository,
-                query,
-                shown,
-                listing=listing,
-                per_file_limit=per_file_limit,
-            )
-            rendered.extend(
-                _bounded_search_lines(
-                    [line for _, _, line in shown],
-                    max_chars=_remaining_search_chars(hints, max_chars),
-                )
-            )
-            rendered.extend(hints)
-            break
+        if body is None:
+            continue
+        rendered.append(label)
+        rendered.append(body)
+        break
     else:
         candidates = {path.casefold(): path for path in listing}
         rendered.extend(
@@ -1137,6 +1196,13 @@ class LocalFixtureEnvironment:
                 relative = path.relative_to(repository).as_posix()
                 old = self._required_string(action.arguments, "old")
                 new = self._required_string(action.arguments, "new", allow_empty=True)
+                if old == new:
+                    raise ToolError(
+                        f"replace_text would not change {relative}: `new` is identical to `old`. "
+                        "This edit is refused instead of reported as applied, so pick the "
+                        "statement that produces the failing value and replace it with corrected "
+                        "code, or use replace_lines on the range read_file showed."
+                    )
                 content = path.read_text(encoding="utf-8")
                 occurrences = content.count(old)
                 if occurrences != 1:
@@ -1167,6 +1233,12 @@ class LocalFixtureEnvironment:
                     end_line=action.arguments.get("end_line"),
                     new=new,
                 )
+                if updated == content:
+                    raise ToolError(
+                        f"replace_lines would not change {relative}: the replacement is identical "
+                        "to the lines it replaces. This edit is refused instead of reported as "
+                        "applied, so change the code those lines contain."
+                    )
                 unparseable = python_edit_syntax_error(
                     relative,
                     updated,

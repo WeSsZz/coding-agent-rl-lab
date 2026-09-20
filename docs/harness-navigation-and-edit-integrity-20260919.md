@@ -736,3 +736,18 @@ So the next lever is to give the taught literal a source that includes the failu
 without inventing them: run the baseline verifier for each pinned train row at dataset build time and
 store its real `failure_summary`. That is one test run per row for six rows, it is the same evidence
 the live prompt carries, and it removes the last synthetic stand-in in the `locate` stage.
+
+**That lever is a data-coverage decision, and the split cannot supply it.** A route extractor was
+written and tried: it pulls `moto-api/config` out of the held-out test patch, which is exactly the
+literal the policy fails to search, and it returns `None` for **all six** pinned train rows because
+none of their tests speaks HTTP - they are DynamoDB, S3, EMR and stepfunctions tests whose failures
+name their own values rather than a runtime response. So a route-aware `locate` target is a no-op for
+every training example, and it was reverted rather than shipped as a fix that changes nothing. The
+same constraint applies to `[string values in the failing frame]`, whose values only a verifier run
+produces.
+
+The remaining gap is therefore not a prompt or an environment rule: the held-out task is reached by
+searching a route or a runtime response value, and the six pinned train tasks contain no example of
+either. Closing it means either admitting route-shaped or HTTP-shaped tasks to the pinned train split,
+or running the baseline verifier per train row at build time to harvest real failure summaries - both
+of which are dataset decisions rather than another harness tweak.

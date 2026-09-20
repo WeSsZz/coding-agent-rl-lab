@@ -6,6 +6,7 @@ import unittest
 from coding_agent_rl_lab.swe_gym_sft import (
     MAX_TARGET_ACTION_CHARS,
     SFTDatasetError,
+    _require_no_gold_leak,
     build_train_gold_sft_dataset,
     parse_unified_diff,
 )
@@ -143,6 +144,29 @@ class SWEGymSFTTests(unittest.TestCase):
         # A test that calls no endpoint still asserts something the failure names, so the row
         # keeps the shape instead of falling back to the bare test name.
         self.assertIn("[failing statement] tests/test_service.py:60:", payload["initial_observation"])
+
+    def test_an_observation_that_quotes_the_fix_is_refused(self) -> None:
+        # The gold patch adds `return max(0, value)`; a failure output that printed it would hand
+        # the policy the answer instead of the evidence, so the builder refuses the row.
+        observation = (
+            "Baseline verifier result:\nTests failed (exit=1).\n"
+            "[last error] AssertionError: assert 0 == 1\n"
+            "    return max(0, value)\n"
+        )
+
+        with self.assertRaisesRegex(SFTDatasetError, "leaks a gold patch line"):
+            _require_no_gold_leak("getmoto__moto-7509", observation, SOURCE_AND_TEST_PATCH)
+
+    def test_an_observation_with_failure_evidence_is_not_a_leak(self) -> None:
+        observation = (
+            "Baseline verifier result:\nTests failed (exit=1).\n"
+            "[failing statement] tests/test_service.py:29: assert calculate(1) == 0\n"
+            "[last error] AssertionError: assert 1 == 0\n"
+        )
+
+        # Raises nothing: the assertion and the exception are the failure, and the dataset is
+        # answer-bearing by design - only the prompt has to stay free of the fix.
+        _require_no_gold_leak("getmoto__moto-7509", observation, SOURCE_AND_TEST_PATCH)
 
     def test_harvested_runtime_lines_are_carried_into_the_observation(self) -> None:
         row = _row()

@@ -156,6 +156,7 @@ def build_train_gold_sft_dataset(
                 example_counts[example["stage"]] += 1
         if usable_hunks == 0:
             raise SFTDatasetError(f"train row {task_id} has no supported source-edit hunks")
+        _require_no_gold_leak(task_id, initial_observation, patch)
         task_ids.append(task_id)
 
     report = {
@@ -175,6 +176,30 @@ def build_train_gold_sft_dataset(
         "intended_use": "train-split-only-supervised-tool-warm-start",
     }
     return tuple(examples), report
+
+
+def _require_no_gold_leak(task_id: str, observation: str, patch: str) -> None:
+    """Refuse a row whose observation quotes the fix.
+
+    The observation is built from the test the verifier runs and from archived failure output, so it
+    should never contain a line the gold patch adds. The dataset is answer-bearing by design, but the
+    *prompt* must not be: the model has to find the file, and a prompt that already prints the fix
+    would make every arm above meaningless.
+    """
+
+    for line in patch.splitlines():
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        statement = line[1:].strip()
+        if len(statement) < 12:
+            # Short lines - a brace, `pass`, a bare return, an import - appear in any failure
+            # output, and a fix is rarely one of them alone.
+            continue
+        if statement in observation:
+            raise SFTDatasetError(
+                f"train row {task_id} leaks a gold patch line into the initial observation: "
+                f"{statement[:80]!r}"
+            )
 
 
 def write_sft_dataset(

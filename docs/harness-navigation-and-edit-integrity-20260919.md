@@ -638,3 +638,47 @@ What it also shows is that the failure is no longer reachable from the harness s
 real edits lands in `moto/moto_api/_internal/`, in this arm or the previous one. The two levers
 that remain are the training-observation fidelity above and the initial search hint; neither is a
 scoring or environment rule, and both change only what the policy sees.
+
+### The search retry was retrying the query, and fixing that does not help this task
+
+`search_repository` promised a missed query one retry and picked its longest whitespace token, so a
+path-like query was retried with itself: `moto/config/server.py` is one token, it does not exist, and
+the second attempt found the same nothing. The model was then left with eight `SUGGESTED_PATH` lines
+from `difflib`, all under `moto/config/` or `moto/`, which is exactly the query it used on
+`getmoto__moto-7393` and exactly the confirmation of the wrong hypothesis. Both searches now walk the
+query's own segments with the basename first, and both share one matcher so a retry cannot re-enter
+the fallback and recurse.
+
+The retry is verified working - `search_repository(root, "moto/dynamodb/models.py")` now answers
+`PATH_MATCH:moto/dynamodb/models/__init__.py` where it used to offer a fuzzy suggestion - and it
+does not help this task, for a reason worth recording. In the real repository there is no
+`moto/server.py` at that path, so the basename of the failing query is not a file either:
+
+| arm (same task, same 8 seeds, `--max_tokens 4096`) | tests passed | seeds reaching a change | real edits | no-ops refused | steps naming `moto/moto_api` | `mean_training_reward` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `sftv24` | 0/8 | 2 | 2 | 0 | **0** | -0.2425 |
+| `sftv25` (dataset fix) | 0/8 | 7 | 7 | 0 | **0** | -0.1062 |
+| `sftv25` + no-op refusal | 0/8 | 6 | 9 | 21 | **0** | -0.1100 |
+| `sftv25` + refusal + search retry | 0/8 | 1 | 3 | 17 | **0** | -0.2500 |
+
+**No arm ever sees the gold package, and the reason is the queries themselves.** Every `search_text`
+the policy issues across all four arms is a guessed file path - `moto/config/server.py`,
+`moto/api/server.py`, `moto/core/server.py`, `moto/batch/server.py`, `moto/s3/server.py`. It never
+searches either literal that reaches the answer, and both were in its prompt:
+
+```
+query 'Not yet implemented'    -> moto/moto_api/_internal/urls.py:11   (the failure frame quotes it)
+query 'moto-api/config'        -> moto/moto_api/_internal/urls.py:2    (the failing test requests it)
+```
+
+The retry fix cannot substitute for a query the policy never makes, and the no-op refusal converts
+19 silent no-ops into 21 honest refusals without giving the policy anything to do instead. Patch
+selection is the whole remaining gap on this task, and it is a training-data problem: the builder's
+`_training_initial_observation` is 172 characters of test name while the live observation is 6794
+characters carrying `[failing statement]`, `[last error]` and
+`[string values in the failing frame] s = 'Not yet implemented'`. The adapter has never been shown
+that a failure names a searchable literal, so it does what its 204 locate examples taught - name a
+file. Extending the fidelity fix to the initial observation is the next change, and it must not
+simply copy the live failure text in: the frame literals are free at train time and are the signal
+being graded at eval time. Build them from the test patch and the gold patch the row already
+carries, so the training prompt shows a failure of the same *shape* without shipping the answer.

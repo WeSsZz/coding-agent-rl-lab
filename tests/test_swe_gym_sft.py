@@ -7,6 +7,7 @@ from coding_agent_rl_lab.swe_gym_sft import (
     MAX_TARGET_ACTION_CHARS,
     SFTDatasetError,
     _require_no_gold_leak,
+    _test_patch_assertion,
     build_train_gold_sft_dataset,
     parse_unified_diff,
 )
@@ -186,6 +187,65 @@ class SWEGymSFTTests(unittest.TestCase):
         # values stay in the observation, where they belong.
         self.assertNotIn(query, {"t911877", "11.700000000000003"})
         self.assertIn("t911877", json.loads(examples[0]["messages"][1]["content"])["initial_observation"])
+
+    def test_a_read_window_uses_the_real_file_numbering_not_the_fragment(self) -> None:
+        row = _row()
+        # The patch hunk starts at line 10, so a fragment rendered on its own would number the
+        # first line `1:` while the read action asks for 8-30. The window has to come from the
+        # file, or the observation contradicts the command printed beside it.
+        source = "\n".join(f"line {number}" for number in range(1, 41)) + "\n"
+        source = source.replace("line 10", "def calculate(value):")
+        source = source.replace("line 11", "    return value")
+
+        examples, report = build_train_gold_sft_dataset(
+            (row,),
+            task_sources={row["instance_id"]: {"moto/service/models.py": source}},
+        )
+        edit = next(example for example in examples if example["stage"] == "edit")
+        payload = json.loads(edit["messages"][1]["content"])
+        read_args = next(
+            entry["action"]["arguments"]
+            for entry in payload["history"]
+            if (entry.get("action") or {}).get("kind") == "read_file"
+        )
+        read_observation = next(
+            entry["observation"]
+            for entry in payload["history"]
+            if (entry.get("action") or {}).get("kind") == "read_file"
+        )
+
+        first = read_observation.splitlines()[0]
+        self.assertEqual(first, f"{read_args['start_line']}: {source.splitlines()[read_args['start_line'] - 1]}")
+        self.assertTrue(all(example["read_window_is_real_source"] for example in examples))
+        self.assertEqual(report["examples_with_real_read_window"], len(examples))
+
+    def test_without_source_the_read_window_is_flagged_and_still_builds(self) -> None:
+        examples, report = build_train_gold_sft_dataset((_row(),))
+
+        # A row the fetcher could not cover still builds, but it is counted so it cannot be
+        # mistaken for one that shows the real window.
+        self.assertEqual(report["examples_with_real_read_window"], 0)
+        self.assertTrue(all(not example["read_window_is_real_source"] for example in examples))
+
+    def test_a_deletion_does_not_advance_the_new_side_line_number(self) -> None:
+        patch = (
+            "diff --git a/tests/test_x.py b/tests/test_x.py\n"
+            "--- a/tests/test_x.py\n"
+            "+++ b/tests/test_x.py\n"
+            "@@ -8,3 +8,3 @@\n"
+            " def test_a():\n"
+            "-    old_call()\n"
+            '     resp = requests.get("/moto-api/config")\n'
+            '+    assert resp.json()["batch"] == {"use_docker": True}\n'
+            "     pass\n"
+        )
+
+        # The new side numbers the assertion 10: the deleted line was never in the new file.
+        self.assertEqual(_test_patch_assertion(patch), (
+            "tests/test_x.py",
+            10,
+            'assert resp.json()["batch"] == {"use_docker": True}',
+        ))
 
     def test_harvested_runtime_lines_are_carried_into_the_observation(self) -> None:
         row = _row()

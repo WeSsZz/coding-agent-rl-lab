@@ -94,11 +94,13 @@ def build_train_gold_sft_dataset(
     rows: Iterable[dict[str, Any]],
     *,
     harvested_failures: dict[str, tuple[str, ...]] | None = None,
+    task_sources: dict[str, dict[str, str]] | None = None,
 ) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
     items = tuple(rows)
     if not items:
         raise SFTDatasetError("at least one train row is required")
     harvested = harvested_failures or {}
+    sources = task_sources or {}
     allowed = {item.instance_id: item for item in pinned_rows_for_task_set("train")}
     seen: set[str] = set()
     examples: list[dict[str, Any]] = []
@@ -151,6 +153,7 @@ def build_train_gold_sft_dataset(
                 hunk,
                 hunk_index=hunk_index,
                 initial_observation=initial_observation,
+                sources=sources.get(task_id, {}),
             ):
                 examples.append(example)
                 example_counts[example["stage"]] += 1
@@ -168,6 +171,11 @@ def build_train_gold_sft_dataset(
         "example_count": len(examples),
         "stage_counts": dict(sorted(example_counts.items())),
         "skipped_hunk_counts": dict(sorted(skipped.items())),
+        # Every example should be True. A False here means the read observation numbered the patch
+        # fragment, so the data is internally inconsistent and should not be trained on.
+        "examples_with_real_read_window": sum(
+            1 for example in examples if example["read_window_is_real_source"]
+        ),
         "contains_answers": True,
         "answer_source": "official_swe_gym_gold_patch",
         "prompt_version": PROMPT_VERSION,
@@ -251,6 +259,15 @@ def build_parser() -> argparse.ArgumentParser:
             "test patch states"
         ),
     )
+    parser.add_argument(
+        "--source-root",
+        default="work/private/swe-gym-source-cache",
+        help=(
+            "Per-task real source at the base commit, filled by work/fetch_train_source.py; "
+            "without it a read_file observation numbers the patch fragment from 1 and "
+            "contradicts the window its own action requests"
+        ),
+    )
     return parser
 
 
@@ -264,6 +281,7 @@ def main() -> None:
     examples, report = build_train_gold_sft_dataset(
         rows,
         harvested_failures=load_harvested_failures(project_root / args.failures),
+        task_sources=load_task_sources(project_root / args.source_root),
     )
     write_sft_dataset(
         examples,
@@ -413,6 +431,7 @@ def _hunk_examples(
     *,
     hunk_index: int,
     initial_observation: str,
+    sources: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], ...]:
     path = hunk.new_path
     source_line = next(
@@ -451,16 +470,28 @@ def _hunk_examples(
     run_tests_action = AgentAction(ActionKind.RUN_TESTS)
 
     search_step = TrajectoryStep(1, locate_action, search_observation, False)
-    # The observation has to be rendered exactly the way the live environment renders it, line
-    # numbers and closing footer included. A `read_file` observation is the only place the policy
-    # can see the numbering, so an `edit` target whose history shows bare unnumbered source is a
-    # target the model can copy verbatim - which is precisely the `old` a numbered observation
-    # must never become, and what a warm start trained this way does at inference time.
-    read_observation = render_numbered_window(
-        hunk.old_text,
-        None,
-        max_lines=max(range_end - range_start + 1, len(hunk.old_text.splitlines())),
-    )
+    # The observation has to be rendered the way the live environment renders it: the same window,
+    # the same absolute line numbers, and the same closing footer. Rendering the patch fragment
+    # instead numbered the hunk from 1 while the read action asked for lines 399-433, so the
+    # observation contradicted the command that produced it and `replace_lines` was taught against
+    # numbering that no file has. A missing source file falls back to the fragment and is counted,
+    # because a row that cannot show the real window should not be mistaken for one that does.
+    real_source = sources.get(path)
+    if real_source is not None:
+        total = len(real_source.splitlines())
+        read_observation = render_numbered_window(
+            real_source,
+            (range_start, min(range_end, total)),
+            max_lines=max(range_end - range_start + 1, 1),
+        )
+        faithful_read = True
+    else:
+        read_observation = render_numbered_window(
+            hunk.old_text,
+            None,
+            max_lines=max(range_end - range_start + 1, len(hunk.old_text.splitlines())),
+        )
+        faithful_read = False
     read_step = TrajectoryStep(2, read_action, read_observation, False)
     replace_step = TrajectoryStep(3, replace_action, f"Updated {path}.", False)
     stages = (
@@ -478,6 +509,7 @@ def _hunk_examples(
             hunk_index=hunk_index,
             path=path,
             initial_observation=initial_observation,
+            read_window_is_real_source=faithful_read,
         )
         for stage, history, target in stages
     )
@@ -492,6 +524,7 @@ def _sft_example(
     hunk_index: int,
     path: str,
     initial_observation: str,
+    read_window_is_real_source: bool,
 ) -> dict[str, Any]:
     target_text = json.dumps(target.to_dict(), ensure_ascii=False, separators=(",", ":"))
     identity = f"{task.task_id}\0{path}\0{hunk_index}\0{stage}\0{target_text}"
@@ -512,6 +545,9 @@ def _sft_example(
         "target_action": target.to_dict(),
         "contains_answers": True,
         "answer_source": "official_swe_gym_gold_patch",
+        # False means the read observation numbered the patch fragment instead of the file, so its
+        # line numbers are relative to the hunk and do not match the window the action requests.
+        "read_window_is_real_source": read_window_is_real_source,
     }
 
 
@@ -581,6 +617,10 @@ def _test_patch_assertion(test_patch: str) -> tuple[str, int, str] | None:
             continue
         if line.startswith(("--- ", "diff --git", "index ", "new file mode")):
             continue
+        if line.startswith("-"):
+            # A deletion consumes an old-side line only. Counting it against the new side pushes
+            # every following assertion one line past where the verifier will report it.
+            continue
         if not line.startswith("+"):
             current_line += 1
             continue
@@ -607,6 +647,27 @@ def _test_patch_assertion(test_patch: str) -> tuple[str, int, str] | None:
         path, line, statement = min(group, key=lambda item: item[1])
         return path, line, statement
     return None
+
+
+def load_task_sources(root: Path) -> dict[str, dict[str, str]]:
+    """The real source of every file a task's patch touches, keyed by task then path.
+
+    `work/fetch_train_source.py` fills this from the repository at each task's base commit. Without
+    it the builder can only render the patch fragment, which numbers from 1 while the read action
+    asks for an absolute window - so a row built from the fragment teaches a line numbering that
+    contradicts the command beside it.
+    """
+
+    sources: dict[str, dict[str, str]] = {}
+    if not root.is_dir():
+        return sources
+    for task_dir in sorted(entry for entry in root.iterdir() if entry.is_dir()):
+        files: dict[str, str] = {}
+        for path in sorted(task_dir.rglob("*.py")):
+            files[path.relative_to(task_dir).as_posix()] = path.read_text(encoding="utf-8")
+        if files:
+            sources[task_dir.name] = files
+    return sources
 
 
 def load_harvested_failures(path: Path) -> dict[str, tuple[str, ...]]:

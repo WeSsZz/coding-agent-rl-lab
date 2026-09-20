@@ -751,3 +751,29 @@ searching a route or a runtime response value, and the six pinned train tasks co
 either. Closing it means either admitting route-shaped or HTTP-shaped tasks to the pinned train split,
 or running the baseline verifier per train row at build time to harvest real failure summaries - both
 of which are dataset decisions rather than another harness tweak.
+
+**The second of those turned out to be free.** The archived train-task rollouts already hold the
+verifier's own output for all six pinned train tasks, truncated at ~4000 characters, which is enough
+to keep `[last error]`, `[logged errors]` and the frame's string values even though the
+`[failing statement]` marker is cut off. `work/harvest_train_failures.py` extracts them through
+`failure_summary` - the environment's own function - into
+`work/private/swe-gym-train-failure-lines.json`, and the builder now carries them into the
+observation and prefers them when it picks the literal the `locate` stage teaches. Every pinned row
+moves from an assertion's own operand to a value a real run produced:
+
+| task | taught query | source line |
+| --- | --- | --- |
+| `getmoto__moto-7509` | `InvalidServiceName` | `[last error]` |
+| `getmoto__moto-7365` | `t911877` | `[string values in the failing frame]` |
+| `getmoto__moto-7514` | `select_query` | `[string values in the failing frame]` |
+| `getmoto__moto-7646` | `UpdateItem` | `[last error]` |
+| `getmoto__moto-7607` | `States.Runtime` | `[logged errors]` |
+| `getmoto__moto-7446` | `cfnTask2` | assertion (no runtime line survives the truncation) |
+
+`_search_literal` was rewritten for that text: a quoted value wins outright, because a value a
+failure reports or compares against is a string the source has to contain, and a bare candidate must
+carry an underscore or an inner capital to count as a name. `com.amazonaws.us-west-1.config`,
+`Not yet implemented` and `InvalidServiceName` survive; `Expecting`, `IndexError`, `ClientError` and
+`botocore.exceptions` do not. Dataset `v28` (204 examples, stages unchanged, only the `locate` query
+differs) is built and inspected; **the arm that would measure it has not been run, because the GPU
+instance is stopped** - that measurement is the next action.

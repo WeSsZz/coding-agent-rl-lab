@@ -330,6 +330,25 @@ def _observations_assertion(initial_observation: str) -> str:
     return ""
 
 
+def _is_ephemeral_value(value: str) -> bool:
+    """Whether a quoted failure value is something a mock made up for this one run.
+
+    `t911877`, a generated UUID, a random bucket name: the traceback reports them because the test
+    created them, and no source file contains them, so teaching one as the query to try spends a
+    step on nothing. A value that carries a space, a dot or a hyphen is a name someone wrote.
+    """
+
+    if re.fullmatch(r"[0-9._+-]+", value):
+        # A numeric literal is the compared value, not a name - `11.700000000000003` is what the
+        # arithmetic produced and searching it finds nothing.
+        return True
+    if any(character in value for character in " .-:/_"):
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9]+", value):
+        return False
+    return bool(re.search(r"\d", value)) and bool(re.search(r"[A-Za-z]", value))
+
+
 def _search_literal(statement: str) -> str | None:
     """A literal from a failure that a search can actually match.
 
@@ -355,6 +374,11 @@ def _search_literal(statement: str) -> str | None:
             continue
         if value.casefold() in _NON_IDENTIFIER_VALUES:
             # `utf-8`: a codec the traceback configured, not a name the repository contains.
+            continue
+        if _is_ephemeral_value(value):
+            # `t911877`: a table name the mock generated for this run. A policy that learns to
+            # search it spends a step on a string no source file contains. It is still shown in the
+            # observation, where it belongs; it is just not what the stage teaches.
             continue
         candidates.append((2, value))
     for fragment in re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", text):

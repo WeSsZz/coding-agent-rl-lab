@@ -168,6 +168,25 @@ class SWEGymSFTTests(unittest.TestCase):
         # answer-bearing by design - only the prompt has to stay free of the fix.
         _require_no_gold_leak("getmoto__moto-7509", observation, SOURCE_AND_TEST_PATCH)
 
+    def test_locate_never_teaches_a_value_a_mock_made_up_for_one_run(self) -> None:
+        row = _row()
+        harvested = {
+            row["instance_id"]: (
+                "[last error] AssertionError: assert Decimal('11.7') == Decimal('11.700000000000003')",
+                "[string values in the failing frame] table_name = 't911877'",
+            )
+        }
+
+        examples, _ = build_train_gold_sft_dataset((row,), harvested_failures=harvested)
+        locate = next(example for example in examples if example["stage"] == "locate")
+        query = locate["target_action"]["arguments"]["query"]
+
+        # `t911877` is a table the mock generated and `11.700000000000003` is what the arithmetic
+        # produced; neither is in any source file, so teaching one spends the step on nothing. The
+        # values stay in the observation, where they belong.
+        self.assertNotIn(query, {"t911877", "11.700000000000003"})
+        self.assertIn("t911877", json.loads(examples[0]["messages"][1]["content"])["initial_observation"])
+
     def test_harvested_runtime_lines_are_carried_into_the_observation(self) -> None:
         row = _row()
         harvested = {

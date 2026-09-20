@@ -92,10 +92,13 @@ def parse_unified_diff(patch: str) -> tuple[PatchHunk, ...]:
 
 def build_train_gold_sft_dataset(
     rows: Iterable[dict[str, Any]],
+    *,
+    harvested_failures: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
     items = tuple(rows)
     if not items:
         raise SFTDatasetError("at least one train row is required")
+    harvested = harvested_failures or {}
     allowed = {item.instance_id: item for item in pinned_rows_for_task_set("train")}
     seen: set[str] = set()
     examples: list[dict[str, Any]] = []
@@ -132,7 +135,10 @@ def build_train_gold_sft_dataset(
             max_steps=12,
             metadata={"repo": "getmoto/moto", "version": "5.0"},
         )
-        initial_observation = _training_initial_observation(row)
+        initial_observation = _training_initial_observation(
+            row,
+            harvested.get(task_id, ()),
+        )
         usable_hunks = 0
         for hunk_index, hunk in enumerate(parse_unified_diff(patch), start=1):
             reason = _unsupported_hunk_reason(hunk)
@@ -211,6 +217,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--report",
         default="work/private/swe-gym-train-gold-sft-v1-report.json",
     )
+    parser.add_argument(
+        "--failures",
+        default="work/private/swe-gym-train-failure-lines.json",
+        help=(
+            "Verifier failure lines harvested from archived train-task rollouts by "
+            "work/harvest_train_failures.py; missing means the rows keep only what the "
+            "test patch states"
+        ),
+    )
     return parser
 
 
@@ -221,7 +236,10 @@ def main() -> None:
         rows = _download_pinned_rows(pinned_rows_for_task_set("train"))
     else:
         rows = _load_rows(project_root / args.input)
-    examples, report = build_train_gold_sft_dataset(rows)
+    examples, report = build_train_gold_sft_dataset(
+        rows,
+        harvested_failures=load_harvested_failures(project_root / args.failures),
+    )
     write_sft_dataset(
         examples,
         report,
@@ -252,6 +270,25 @@ _PYTHON_KEYWORDS = frozenset(
     yield self len print""".split()
 )
 
+#: Modules a failure names because they raised, not because the fix lives in them.
+_LIBRARY_MODULES = frozenset(
+    """requests botocore boto3 urllib http json decimal pytest unittest os sys re typing
+    pathlib datetime collections""".split()
+)
+
+#: Quoted values a traceback carries that name nothing in the repository.
+_NON_IDENTIFIER_VALUES = frozenset(
+    """utf-8 utf8 ascii latin-1 true false none""".split()
+)
+
+#: Words a traceback sentence is built from, which name nothing to search for.
+_PROSE_WORDS = frozenset(
+    """Expecting value line column char invalid syntax error occurred calling operation the
+    provided key element does not match schema should have failed already list index out of
+    range decode codec byte position continuation with exit tests failed baseline verifier
+    result requests exceptions during handling above another""".split()
+)
+
 
 def _observations_assertion(initial_observation: str) -> str:
     """The `[failing statement]` line's assertion text, and nothing else.
@@ -269,48 +306,56 @@ def _observations_assertion(initial_observation: str) -> str:
 
 
 def _search_literal(statement: str) -> str | None:
-    """A literal from a failing assertion that a search can actually match.
+    """A literal from a failure that a search can actually match.
 
     The locate stage used to teach `search_text` with the gold file's path, which is a query no
     policy can derive and which tells the search nothing it did not already know. What the live
-    prompt asks for is the opposite: search an identifier or a literal the failure names. The
-    assertion is where that evidence lives, and the value it compares against is the most
-    discriminating thing in it - `use_docker` out of
-    `assert resp.json()["batch"] == {"use_docker": True}` - so a quoted name outranks a bare one,
-    and a shorter quoted name outranks a longer wrapper around it.
+    prompt asks for is the opposite: search an identifier or a literal the failure names.
+
+    Two shapes are worth teaching, and both come from the failure rather than the fix. A quoted
+    value is what a failure reports or compares against - `'Not yet implemented'`, `'t911877'`,
+    `select_query` - so it wins outright: it is a string the source has to contain somewhere. After
+    that, an identifier carrying an underscore or an inner capital is a name a human chose, as
+    against the English words and library classes a traceback is mostly made of.
     """
 
-    fragments = re.findall(r"[A-Za-z_][A-Za-z0-9_.]{3,}", statement or "")
-    best: str | None = None
-    best_score = -1
-    for fragment in fragments:
-        candidate = fragment.rstrip(".")
+    text = statement or ""
+    candidates: list[tuple[int, str]] = []
+    for match in re.finditer(r"""['"]([^'"]{4,})['"]""", text):
+        value = match.group(1).strip()
+        if not value or value.endswith(".py") or "/" in value:
+            continue
+        if any(bad in value for bad in (",", "=", "(", ")", "{", "}")):
+            # A slice of a failure sentence rather than a value: `', select_query ='`.
+            continue
+        if value.casefold() in _NON_IDENTIFIER_VALUES:
+            # `utf-8`: a codec the traceback configured, not a name the repository contains.
+            continue
+        candidates.append((2, value))
+    for fragment in re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", text):
+        candidate = fragment.rstrip("_")
         if len(candidate) < 4 or candidate in _PYTHON_KEYWORDS:
             continue
+        if candidate.casefold() in _PROSE_WORDS:
+            continue
         if candidate.startswith(("test_", "Test")):
-            # The prompt already tells the policy not to search for a test name or a decorator.
             continue
-        parts = candidate.split(".")
-        if candidate.endswith(".py") or len(parts) > 2:
+        if candidate.endswith(("Error", "Exception")):
+            # `IndexError`, `ClientError`, `UnicodeDecodeError`: what raised, not where the fix is.
             continue
-        quoted = bool(re.search(rf"""['"]{re.escape(candidate)}['"]""", statement))
-        score = 0
-        if quoted:
-            score += 6
-        if parts[-1][:1].isupper():
-            score += 3
-        if len(parts) == 2:
-            score += 2
-        if "_" in candidate:
-            score += 1
-        if candidate[:1].isupper():
-            score += 1
-        # Within a band, the shortest name is the most specific thing the failure names; the
-        # longest is usually the container the compared value sits inside.
-        rank = score * 100 - len(candidate) if quoted else score * 100 + len(candidate)
-        if rank > best_score:
-            best, best_score = candidate, rank
-    return best
+        if "_" not in candidate and not re.search(r"[a-z][A-Z]", candidate):
+            # Nothing marks it as a name: it is an English word or a class from a library.
+            continue
+        if candidate.split(".")[0].casefold() in _LIBRARY_MODULES:
+            continue
+        candidates.append((1, candidate))
+    if not candidates:
+        return None
+    best_rank, best_candidate = max(
+        candidates,
+        key=lambda item: (item[0], -abs(len(item[1]) - 12), item[1]),
+    )
+    return best_candidate
 
 
 def _hunk_examples(
@@ -336,7 +381,11 @@ def _hunk_examples(
     # run ever produced. What that leaves uncovered is the next thing to look at: the arm trained
     # this way does search a failure literal, but it searches the exception class from
     # `[last error]` rather than a value the failing frame named.
-    locate_query = _search_literal(_observations_assertion(initial_observation)) or path
+    locate_query = (
+        _search_literal(_harvested_literal_source(initial_observation))
+        or _search_literal(_observations_assertion(initial_observation))
+        or path
+    )
     locate_action = AgentAction(ActionKind.SEARCH_TEXT, {"query": locate_query})
     search_observation = f"{path}:{hunk.old_start}:{source_line[:300]}"
     range_start = max(1, hunk.old_start - 10)
@@ -511,7 +560,56 @@ def _test_patch_assertion(test_patch: str) -> tuple[str, int, str] | None:
     return None
 
 
-def _training_initial_observation(row: dict[str, Any]) -> str:
+def load_harvested_failures(path: Path) -> dict[str, tuple[str, ...]]:
+    """The verifier's own failure lines for the pinned train tasks, keyed by task id.
+
+    `work/harvest_train_failures.py` reads them out of the archived train-task rollouts, so they
+    are what a real run printed rather than something the builder composed. A missing file is not
+    an error: the dataset is still useful without them, it just loses the runtime values.
+    """
+
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SFTDatasetError(f"harvested failure file is not valid JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise SFTDatasetError(f"harvested failure file must map task ids to lines: {path}")
+    harvested: dict[str, tuple[str, ...]] = {}
+    for task_id, lines in payload.items():
+        if isinstance(lines, list) and all(isinstance(line, str) for line in lines):
+            harvested[str(task_id)] = tuple(lines)
+    return harvested
+
+
+def _harvested_literal_source(initial_observation: str) -> str:
+    """The evidence lines a real run produced, which are the failure's strongest literals.
+
+    `[last error]` names the exception and the values it carried, and
+    `[string values in the failing frame]` names the values the failing frame held - an operation
+    name, a bucket, a route. Those are what the live prompt offers and what a policy has to search;
+    the assertion below them is the fallback, not the first choice.
+    """
+
+    wanted = (
+        "[last error] ",
+        "[logged errors] ",
+        "[string values in the failing frame] ",
+    )
+    lines = []
+    for line in (initial_observation or "").splitlines():
+        for marker in wanted:
+            if line.startswith(marker):
+                lines.append(line[len(marker) :])
+                break
+    return " ".join(lines)
+
+
+def _training_initial_observation(
+    row: dict[str, Any],
+    harvested: tuple[str, ...] = (),
+) -> str:
     raw_tests = row.get("FAIL_TO_PASS", ())
     if isinstance(raw_tests, str):
         try:
@@ -536,6 +634,10 @@ def _training_initial_observation(row: dict[str, Any]) -> str:
     if assertion is not None:
         path, line, statement = assertion
         parts.append(f"[failing statement] {path}:{line}: {statement[:200]}")
+    # Then the lines only a run produces. A row cannot synthesise them, and `[string values in the
+    # failing frame]` is where a failure names the value that points at the module answering it,
+    # so they are carried in from the archived verifier output when it exists.
+    parts.extend(harvested)
     return "\n".join(parts)
 
 

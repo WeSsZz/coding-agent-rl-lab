@@ -144,6 +144,53 @@ class SWEGymSFTTests(unittest.TestCase):
         # keeps the shape instead of falling back to the bare test name.
         self.assertIn("[failing statement] tests/test_service.py:60:", payload["initial_observation"])
 
+    def test_harvested_runtime_lines_are_carried_into_the_observation(self) -> None:
+        row = _row()
+        harvested = {
+            row["instance_id"]: (
+                "[last error] AssertionError: assert Decimal('11.7') == Decimal('11.70')",
+                "[string values in the failing frame] table_name = 't911877'",
+            )
+        }
+
+        examples, _ = build_train_gold_sft_dataset((row,), harvested_failures=harvested)
+        payload = json.loads(examples[0]["messages"][1]["content"])
+
+        # `[last error]` and the frame's string values are what only a run produces, so a row
+        # cannot compose them; they come from the archived verifier output.
+        self.assertIn("[last error] AssertionError", payload["initial_observation"])
+        self.assertIn("[string values in the failing frame]", payload["initial_observation"])
+
+    def test_a_row_without_harvested_lines_keeps_only_what_the_test_patch_states(self) -> None:
+        # This fixture's test patch renames a test and adds no assertion, so the row has no
+        # statement to carry and must not invent one. Every pinned row does have one.
+        examples, _ = build_train_gold_sft_dataset((_row(),))
+        payload = json.loads(examples[0]["messages"][1]["content"])
+
+        self.assertNotIn("[last error]", payload["initial_observation"])
+        self.assertNotIn("[string values in the failing frame]", payload["initial_observation"])
+        self.assertIn("test_new", payload["initial_observation"])
+
+    def test_locate_prefers_a_runtime_value_over_the_assertion(self) -> None:
+        row = _row()
+        harvested = {
+            row["instance_id"]: (
+                "[last error] botocore.exceptions.ClientError: An error occurred "
+                "(InvalidServiceName) when calling the DescribeVpcEndpointServices operation",
+            )
+        }
+
+        examples, _ = build_train_gold_sft_dataset((row,), harvested_failures=harvested)
+        locate = next(example for example in examples if example["stage"] == "locate")
+
+        # The runtime line names what the implementation answers, which is the literal the held-out
+        # task needs and the assertion does not carry. The service exception's own name wins: it is
+        # the most specific name in the line and it appears in the code that raises it.
+        self.assertEqual(
+            locate["target_action"]["arguments"]["query"],
+            "InvalidServiceName",
+        )
+
     def test_locate_teaches_the_failure_literal_not_the_gold_path(self) -> None:
         row = _row()
         row["test_patch"] = (

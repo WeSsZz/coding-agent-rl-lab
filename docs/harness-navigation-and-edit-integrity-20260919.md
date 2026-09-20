@@ -682,3 +682,57 @@ file. Extending the fidelity fix to the initial observation is the next change, 
 simply copy the live failure text in: the frame literals are free at train time and are the signal
 being graded at eval time. Build them from the test patch and the gold patch the row already
 carries, so the training prompt shows a failure of the same *shape* without shipping the answer.
+
+### Teaching the failure literal moves the search and still misses the file
+
+That change was made in two steps, and the second one is the informative one.
+
+**Step one: give the observation the live shape.** `_training_initial_observation` was 172
+characters of test name. It now also carries
+`[failing statement] <path>:<line>: <assert ...>`, lifted from the test patch the verifier will run
+(`_test_patch_assertion`), so 204 of 204 examples have the shape instead of 0. Every extractable
+statement is correct for the pinned rows, and for `getmoto__moto-7393` the extractor independently
+lands on `tests/test_core/test_config.py:20: assert resp.json()["batch"] == {"use_docker": True}` -
+the exact line and text the live verifier reported.
+
+**It changed nothing.** The arm trained on it (`sftv26`) searched `moto/config/server.py`,
+`moto/api/server.py`, `moto/core/server.py` and `moto/batch/models.py`, exactly as before, and never
+searched one failure literal:
+
+| arm (`--max_tokens 4096`, same 8 seeds) | tests passed | seeds reaching a change | real edits | `search_text` steps using a failure literal | steps naming `moto/moto_api` | `mean_training_reward` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `sftv25` | 0/8 | 7 | 26 | 0 | 0 | -0.1062 |
+| `sftv26` (failing statement in the observation) | 0/8 | 4 | 8 | **0** | 0 | -0.2350 |
+| `sftv27` (locate target is a failure literal) | 0/8 | 6 | 16 | **21** | 0 | -0.2350 |
+
+**Step two: teach it with the action, not the observation.** The locate stage's target was
+`{"kind":"search_text","arguments":{"query":"moto/acm/models.py"}}` - the gold file's path, a query
+no policy can derive and one the search already answers. The observation above it described the
+failure, and the target told the policy to ignore that and name a file, which is what a warm start
+copies. `_search_literal` now derives the taught query from the failing assertion
+(`use_docker` out of `assert resp.json()["batch"] == {"use_docker": True}`), and the arm's search
+behaviour flips: **0 to 21** `search_text` calls whose query is a failure literal, with
+`RequestsJSONDecodeError`, `logger.warning`, `Service` and `msg` replacing the guessed paths.
+
+**And it still never reaches `moto/moto_api`.** The policy now searches the wrong *part* of the
+failure. For `getmoto__moto-7393` its prompt offers four evidence lines and it picks from the third:
+
+```
+[failing tests]                      tests/test_core/test_config.py::test_change_configuration_using_api
+[failing statement]                  tests/test_core/test_config.py:20: assert resp.json()["batch"] == {"use_docker": True}
+[last error]                         requests.exceptions.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+[string values in the failing frame] s = 'Not yet implemented'
+```
+
+It searches `RequestsJSONDecodeError` - the exception class - while `moto-api` (from the route the
+test requests) and `'Not yet implemented'` (the server's own response text, defined only in the gold
+file) both sit in the same prompt unsearched. The training rows cannot demonstrate those two: the
+builder never runs the verifier, so `[last error]` and `[string values in the failing frame]` have no
+honest source, and the only failure evidence a row really has is the assertion. The taught literal is
+therefore always an assertion literal, and the assertion's own values - `use_docker`, not `moto-api` -
+are what the policy learned to prefer.
+
+So the next lever is to give the taught literal a source that includes the failure's *runtime* values
+without inventing them: run the baseline verifier for each pinned train row at dataset build time and
+store its real `failure_summary`. That is one test run per row for six rows, it is the same evidence
+the live prompt carries, and it removes the last synthetic stand-in in the `locate` stage.

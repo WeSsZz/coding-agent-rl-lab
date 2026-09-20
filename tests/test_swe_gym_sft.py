@@ -92,6 +92,92 @@ class SWEGymSFTTests(unittest.TestCase):
         self.assertEqual(edit["kind"], "replace_text")
         self.assertIn("return value", edit["arguments"]["old"])
 
+    def test_initial_observation_names_the_assertion_a_failing_test_makes(self) -> None:
+        # The live observation carries `[failing statement] <path>:<line>: <assert ...>`; a
+        # training row that stops at the test name teaches the policy to answer a failure by
+        # naming a file instead of reading what the failure says. This reproduces the shape of
+        # the held-out row for `getmoto__moto-7393`, whose real failing line is the first check of
+        # what the unimplemented route returned.
+        row = _row()
+        row["test_patch"] = (
+            "diff --git a/tests/test_core/test_config.py b/tests/test_core/test_config.py\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/tests/test_core/test_config.py\n"
+            "@@ -0,0 +1,8 @@\n"
+            "+def test_change_configuration_using_api() -> None:\n"
+            '+    assert default_user_config["batch"] == {"use_docker": True}\n'
+            "+\n"
+            '+    resp = requests.get("http://motoapi.amazonaws.com/moto-api/config")\n'
+            '+    assert resp.json()["batch"] == {"use_docker": True}\n'
+            '+    assert resp.json()["lambda"] == {"use_docker": True}\n'
+            "+\n"
+            '+    assert resp.status_code == 200\n'
+        )
+
+        examples, _ = build_train_gold_sft_dataset((row,))
+        payload = json.loads(examples[0]["messages"][1]["content"])
+
+        self.assertIn(
+            "[failing statement] tests/test_core/test_config.py:5: "
+            'assert resp.json()["batch"] == {"use_docker": True}',
+            payload["initial_observation"],
+        )
+        # The statement comes from the test the verifier runs, never from the gold patch.
+        self.assertNotIn("default_user_config", payload["initial_observation"])
+
+    def test_initial_observation_still_names_a_failure_without_an_asserted_response(self) -> None:
+        row = _row()
+        row["test_patch"] = (
+            "diff --git a/tests/test_service.py b/tests/test_service.py\n"
+            "--- a/tests/test_service.py\n"
+            "+++ b/tests/test_service.py\n"
+            "@@ -60,2 +60,3 @@\n"
+            "+    assert backend.get_value() == 3\n"
+            "     pass\n"
+        )
+
+        examples, _ = build_train_gold_sft_dataset((row,))
+        payload = json.loads(examples[0]["messages"][1]["content"])
+
+        # A test that calls no endpoint still asserts something the failure names, so the row
+        # keeps the shape instead of falling back to the bare test name.
+        self.assertIn("[failing statement] tests/test_service.py:60:", payload["initial_observation"])
+
+    def test_locate_teaches_the_failure_literal_not_the_gold_path(self) -> None:
+        row = _row()
+        row["test_patch"] = (
+            "diff --git a/tests/test_core/test_config.py b/tests/test_core/test_config.py\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/tests/test_core/test_config.py\n"
+            "@@ -0,0 +1,3 @@\n"
+            "+def test_change_configuration_using_api() -> None:\n"
+            "+    resp = requests.get(\"http://motoapi.amazonaws.com/moto-api/config\")\n"
+            '+    assert resp.json()["batch"] == {"use_docker": True}\n'
+        )
+
+        examples, _ = build_train_gold_sft_dataset((row,))
+        locate = next(example for example in examples if example["stage"] == "locate")
+
+        # A locate target naming the gold path is a query the policy cannot derive and one the
+        # search already answers; the prompt asks for a literal the failure names. The action is
+        # what a warm start copies, so the observation above it did not change this on its own.
+        self.assertEqual(
+            locate["target_action"],
+            {"kind": "search_text", "arguments": {"query": "use_docker"}},
+        )
+
+    def test_locate_never_teaches_a_test_name_or_a_header_word(self) -> None:
+        row = _row()
+
+        examples, _ = build_train_gold_sft_dataset((row,))
+        locate = next(example for example in examples if example["stage"] == "locate")
+
+        query = locate["target_action"]["arguments"]["query"]
+        self.assertNotIn(query, {"Baseline", "Tests", "assert"})
+        self.assertFalse(query.startswith("test_"))
+
     def test_edit_history_shows_the_numbered_read_file_observation_the_live_tool_returns(self) -> None:
         examples, _ = build_train_gold_sft_dataset((_row(),))
         edit_example = next(example for example in examples if example["stage"] == "edit")

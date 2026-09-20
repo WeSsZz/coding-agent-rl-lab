@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 from .contracts import ActionKind, AgentAction, CodingTask, DatasetSplit, TrajectoryStep
-from .environment import render_numbered_window
+from .environment import is_test_path, render_numbered_window
 from .model_policy import PROMPT_VERSION, build_action_messages
 from .swe_gym_smoke import _download_pinned_rows, pinned_rows_for_task_set
 
@@ -246,6 +246,73 @@ def _load_rows(path: Path) -> tuple[dict[str, Any], ...]:
     return tuple(rows)
 
 
+_PYTHON_KEYWORDS = frozenset(
+    """False None True and as assert async await break class continue def del elif else except
+    finally for from global if import in is lambda nonlocal not or pass raise return try while with
+    yield self len print""".split()
+)
+
+
+def _observations_assertion(initial_observation: str) -> str:
+    """The `[failing statement]` line's assertion text, and nothing else.
+
+    Parsing the whole observation instead would offer the header - `Baseline`, `Tests` - as the
+    searchable literal, which is a word every row shares and no search can act on.
+    """
+
+    for line in (initial_observation or "").splitlines():
+        if line.startswith("[failing statement] "):
+            body = line[len("[failing statement] ") :]
+            _, _, statement = body.partition(": ")
+            return statement or body
+    return ""
+
+
+def _search_literal(statement: str) -> str | None:
+    """A literal from a failing assertion that a search can actually match.
+
+    The locate stage used to teach `search_text` with the gold file's path, which is a query no
+    policy can derive and which tells the search nothing it did not already know. What the live
+    prompt asks for is the opposite: search an identifier or a literal the failure names. The
+    assertion is where that evidence lives, and the value it compares against is the most
+    discriminating thing in it - `use_docker` out of
+    `assert resp.json()["batch"] == {"use_docker": True}` - so a quoted name outranks a bare one,
+    and a shorter quoted name outranks a longer wrapper around it.
+    """
+
+    fragments = re.findall(r"[A-Za-z_][A-Za-z0-9_.]{3,}", statement or "")
+    best: str | None = None
+    best_score = -1
+    for fragment in fragments:
+        candidate = fragment.rstrip(".")
+        if len(candidate) < 4 or candidate in _PYTHON_KEYWORDS:
+            continue
+        if candidate.startswith(("test_", "Test")):
+            # The prompt already tells the policy not to search for a test name or a decorator.
+            continue
+        parts = candidate.split(".")
+        if candidate.endswith(".py") or len(parts) > 2:
+            continue
+        quoted = bool(re.search(rf"""['"]{re.escape(candidate)}['"]""", statement))
+        score = 0
+        if quoted:
+            score += 6
+        if parts[-1][:1].isupper():
+            score += 3
+        if len(parts) == 2:
+            score += 2
+        if "_" in candidate:
+            score += 1
+        if candidate[:1].isupper():
+            score += 1
+        # Within a band, the shortest name is the most specific thing the failure names; the
+        # longest is usually the container the compared value sits inside.
+        rank = score * 100 - len(candidate) if quoted else score * 100 + len(candidate)
+        if rank > best_score:
+            best, best_score = candidate, rank
+    return best
+
+
 def _hunk_examples(
     task: CodingTask,
     hunk: PatchHunk,
@@ -254,12 +321,23 @@ def _hunk_examples(
     initial_observation: str,
 ) -> tuple[dict[str, Any], ...]:
     path = hunk.new_path
-    query = path
-    search_action = AgentAction(ActionKind.SEARCH_TEXT, {"query": query})
     source_line = next(
         (line.strip() for line in hunk.old_text.splitlines() if line.strip()),
         PurePosixPath(path).name,
     )
+    # The locate target is the stage that teaches how to find a file, and the live prompt asks for
+    # a literal the failure names rather than a path the policy cannot know yet. Teaching it with
+    # the gold path contradicted the observation right above it, and the action wins: the arm that
+    # was trained this way never searched a failure literal once, in any configuration.
+    #
+    # The assertion is the only failure evidence a training row honestly has: `[last error]` and
+    # `[string values in the failing frame]` are produced by running the verifier against the base
+    # commit, which the builder does not do, and inventing them would train the policy on text no
+    # run ever produced. What that leaves uncovered is the next thing to look at: the arm trained
+    # this way does search a failure literal, but it searches the exception class from
+    # `[last error]` rather than a value the failing frame named.
+    locate_query = _search_literal(_observations_assertion(initial_observation)) or path
+    locate_action = AgentAction(ActionKind.SEARCH_TEXT, {"query": locate_query})
     search_observation = f"{path}:{hunk.old_start}:{source_line[:300]}"
     range_start = max(1, hunk.old_start - 10)
     range_end = max(range_start + 19, hunk.old_start + len(hunk.old_text.splitlines()) + 9)
@@ -274,7 +352,7 @@ def _hunk_examples(
     )
     run_tests_action = AgentAction(ActionKind.RUN_TESTS)
 
-    search_step = TrajectoryStep(1, search_action, search_observation, False)
+    search_step = TrajectoryStep(1, locate_action, search_observation, False)
     # The observation has to be rendered exactly the way the live environment renders it, line
     # numbers and closing footer included. A `read_file` observation is the only place the policy
     # can see the numbering, so an `edit` target whose history shows bare unnumbered source is a
@@ -288,7 +366,7 @@ def _hunk_examples(
     read_step = TrajectoryStep(2, read_action, read_observation, False)
     replace_step = TrajectoryStep(3, replace_action, f"Updated {path}.", False)
     stages = (
-        ("locate", (), search_action),
+        ("locate", (), locate_action),
         ("inspect", (search_step,), read_action),
         ("edit", (search_step, read_step), replace_action),
         ("verify", (search_step, read_step, replace_step), run_tests_action),
@@ -370,6 +448,69 @@ def _unsupported_hunk_reason(hunk: PatchHunk) -> str | None:
     return None
 
 
+def _test_patch_assertion(test_patch: str) -> tuple[str, int, str] | None:
+    """The assertion a failing test states, as `(path, line, statement)`.
+
+    The live initial observation carries `[failing statement] <path>:<line>: <assert ...>` lifted
+    from the verifier's traceback, and that line is what tells a policy which literals to search.
+    A training row has no verifier run, so the honest source for the same thing is the test the
+    verifier will run: assertions are taken from added test lines, which is where a test states
+    what it expects. The line number is the added line's position in the patched file and is
+    therefore exact for a new test file; for a modified one it is close but not guaranteed, so it
+    is a position to read from rather than a promise.
+    """
+
+    if not isinstance(test_patch, str) or not test_patch.strip():
+        return None
+    current_path: str | None = None
+    current_line = 0
+    requested = False
+    response_asserts: list[tuple[str, int, str]] = []
+    other_asserts: list[tuple[str, int, str]] = []
+    for line in test_patch.splitlines():
+        if line.startswith("diff --git"):
+            # Each file section restarts the flag, and `new file mode` precedes the `+++` header.
+            current_path = None
+            requested = False
+            continue
+        if line.startswith("+++ "):
+            value = _patch_header_path(line[4:])
+            current_path = None if value == "/dev/null" else value
+            continue
+        if line.startswith("@@"):
+            match = re.match(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)", line)
+            current_line = int(match.group("start")) if match else 0
+            continue
+        if line.startswith(("--- ", "diff --git", "index ", "new file mode")):
+            continue
+        if not line.startswith("+"):
+            current_line += 1
+            continue
+        stripped = line[1:].strip()
+        if "requests.get" in stripped or "requests.post" in stripped:
+            requested = True
+        if current_path and is_test_path(current_path) and stripped.startswith("assert "):
+            entry = (current_path, current_line, stripped)
+            # A route that does not exist fails on the first check of what it returned, so an
+            # assertion about a response is the shape to show, and the first one after a request
+            # is the line the verifier actually reports. A test that calls no endpoint - most of
+            # them - still asserts something the failure names, so any assertion is a fallback
+            # rather than nothing.
+            if requested and re.search(
+                r"\b(resp|response|r)\.(json|text|status_code|content)\b", stripped.casefold()
+            ):
+                response_asserts.append(entry)
+            else:
+                other_asserts.append(entry)
+        current_line += 1
+    for group in (response_asserts, other_asserts):
+        if not group:
+            continue
+        path, line, statement = min(group, key=lambda item: item[1])
+        return path, line, statement
+    return None
+
+
 def _training_initial_observation(row: dict[str, Any]) -> str:
     raw_tests = row.get("FAIL_TO_PASS", ())
     if isinstance(raw_tests, str):
@@ -383,8 +524,19 @@ def _training_initial_observation(row: dict[str, Any]) -> str:
     else:
         tests = ()
     rendered = "\n".join(str(test) for test in tests[:20])
-    suffix = f"\nFailing tests:\n{rendered}" if rendered else ""
-    return f"Baseline verifier result:\nTests failed (exit=1).{suffix}"
+    parts = ["Baseline verifier result:", "Tests failed (exit=1)."]
+    if rendered:
+        parts.append("Failing tests:")
+        parts.append(rendered)
+    # The live observation continues with `[failing statement]`, so a training row that stops at
+    # the test name teaches the policy to answer a failure by naming a file. The assertion is the
+    # part of the failure that names something searchable, and it comes from the test patch rather
+    # than from the gold patch, so nothing about the fix leaks into it.
+    assertion = _test_patch_assertion(row.get("test_patch"))
+    if assertion is not None:
+        path, line, statement = assertion
+        parts.append(f"[failing statement] {path}:{line}: {statement[:200]}")
+    return "\n".join(parts)
 
 
 def _patch_header_path(value: str) -> str:

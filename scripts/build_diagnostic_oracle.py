@@ -107,35 +107,63 @@ def render_window(
     pad: int,
     max_lines: int,
 ) -> tuple[str, dict[str, Any]]:
-    """Numbered view of the union of ``spans`` plus ``pad``, capped at ``max_lines``.
+    """Numbered view of every region the repair touches, plus as much padding as fits.
 
-    The padding shrinks before any hunk is dropped, so a cap never hides the region the repair
-    touches unless the region alone is larger than the cap; that case is reported.
+    The first version of this took the *union* from the first hunk to the last and truncated the
+    tail when the result exceeded ``max_lines``. On a file whose hunks sit 2800 lines apart that
+    anchored the window on the first hunk and silently dropped the region the failure was actually
+    about - `getmoto__moto-7514`'s `models.py` showed lines 1-80 of 2947 while the repair changes
+    lines 2861-2926, and `getmoto__moto-7365` showed one of its three hunks.
+
+    So the rule is now: one interval per hunk, merged when they overlap, padding surrendered first
+    and **never** a hunk. A file whose hunks alone exceed the cap keeps them anyway and says so.
     """
 
     total = len(lines)
     if total == 0:
-        return "", {"first_line": 0, "last_line": 0, "truncated": False, "padding": 0}
-    first_hunk = min(start for start, _ in spans)
-    last_hunk = max(start + count - 1 for start, count in spans)
+        return "", {
+            "intervals": [],
+            "first_line": 0,
+            "last_line": 0,
+            "truncated": False,
+            "padding": 0,
+        }
+
+    def intervals_for(padding: int) -> list[tuple[int, int]]:
+        merged: list[tuple[int, int]] = []
+        for start, count in sorted(spans):
+            first = max(1, start - padding)
+            last = min(total, start + count - 1 + padding)
+            if merged and first <= merged[-1][1] + 1:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], last))
+            else:
+                merged.append((first, last))
+        return merged
+
+    def total_lines(intervals: list[tuple[int, int]]) -> int:
+        return sum(last - first + 1 for first, last in intervals)
+
     padding = pad
-    while padding > 0:
-        candidate_first = max(1, first_hunk - padding)
-        candidate_last = min(total, last_hunk + padding)
-        if candidate_last - candidate_first + 1 <= max_lines:
-            break
+    while padding > 0 and total_lines(intervals_for(padding)) > max_lines:
         padding -= 1
-    first = max(1, first_hunk - padding)
-    last = min(total, last_hunk + padding)
-    truncated = False
-    if last - first + 1 > max_lines:
-        last = first + max_lines - 1
-        truncated = True
-    rendered = [f"{number}: {lines[number - 1]}" for number in range(first, last + 1)]
+    intervals = intervals_for(padding)
+    over_cap = total_lines(intervals) > max_lines
+    rendered: list[str] = []
+    for index, (first, last) in enumerate(intervals):
+        if index:
+            previous = intervals[index - 1][1]
+            skipped = first - previous - 1
+            rendered.append(
+                f"[lines {previous + 1}-{first - 1} not shown: the repair does not touch them "
+                f"({skipped} lines); read them with read_file if you need them]"
+            )
+        rendered.extend(f"{number}: {lines[number - 1]}" for number in range(first, last + 1))
     return "\n".join(rendered), {
-        "first_line": first,
-        "last_line": last,
-        "truncated": truncated,
+        "intervals": [{"first_line": first, "last_line": last} for first, last in intervals],
+        "first_line": intervals[0][0],
+        "last_line": intervals[-1][1],
+        "shown_lines": total_lines(intervals),
+        "truncated": over_cap,
         "padding": padding,
     }
 
@@ -174,7 +202,9 @@ def added_line_overlap(
         locations = []
         for path, window in windows_by_path.items():
             for index, line in enumerate(window["lines"], start=1):
-                if window["first"] <= index <= window["last"] and candidate in line:
+                if any(
+                    first <= index <= last for first, last in window["intervals"]
+                ) and candidate in line:
                     locations.append({"path": path, "base_line": index})
         overlaps.append({"text": candidate, "in_window_at": locations})
     return overlaps
@@ -204,9 +234,13 @@ def window_block(paths: list[str], entries: list[dict[str, Any]]) -> str:
         "described. Verify anything you rely on with your own tools.\n"
     )
     for entry in entries:
+        spans = ", ".join(
+            f"{interval['first_line']}-{interval['last_line']}"
+            for interval in entry["intervals"]
+        )
         parts.append(
             f"\n----- {entry['path']} (base commit {entry['base_commit'][:12]}, "
-            f"lines {entry['first_line']}-{entry['last_line']} of {entry['total_lines']})\n"
+            f"lines {spans} of {entry['total_lines']})\n"
         )
         parts.append(entry["rendered"] + "\n")
     return "".join(parts)
@@ -323,12 +357,10 @@ def main(argv: list[str] | None = None) -> int:
                 pad=args.pad,
                 max_lines=args.max_lines_per_file,
             )
-            if total_lines and total_lines + (geometry["last_line"] - geometry["first_line"] + 1) > (
-                args.max_total_lines
-            ):
+            if total_lines and total_lines + geometry["shown_lines"] > args.max_total_lines:
                 skipped.append({"path": path, "reason": "total line budget reached"})
                 continue
-            total_lines += geometry["last_line"] - geometry["first_line"] + 1
+            total_lines += geometry["shown_lines"]
             entries.append(
                 {
                     "path": path,
@@ -338,13 +370,16 @@ def main(argv: list[str] | None = None) -> int:
                     "total_lines": len(lines),
                     **geometry,
                     "hunks": [{"new_start": start, "new_count": count} for start, count in spans],
+                    "covers_every_hunk": True,
                     "rendered": rendered,
                     "window_sha256": _sha256_text(rendered),
                 }
             )
             windows_by_path[path] = {
-                "first": geometry["first_line"],
-                "last": geometry["last_line"],
+                "intervals": [
+                    (interval["first_line"], interval["last_line"])
+                    for interval in geometry["intervals"]
+                ],
                 "lines": lines,
             }
         file_block = file_list_block(paths)
@@ -394,6 +429,15 @@ def main(argv: list[str] | None = None) -> int:
                 "added_line_disclosure": window_overlap,
             }
         )
+        uncovered = [
+            {"path": path, "new_start": start, "new_end": start + count - 1}
+            for path, spans in hunks.items()
+            for start, count in spans
+            if not any(
+                first <= start and start + count - 1 <= last
+                for first, last in windows_by_path.get(path, {}).get("intervals", [])
+            )
+        ]
         manifest["tasks"].append(
             {
                 "task_id": task_id,
@@ -402,6 +446,8 @@ def main(argv: list[str] | None = None) -> int:
                 "files_with_windows": [entry["path"] for entry in entries],
                 "window_line_total": total_lines,
                 "skipped": skipped,
+                "hunks_not_covered": uncovered,
+                "hunks_not_covered_count": len(uncovered),
                 "auxiliary_sha256": {
                     "A": _sha256_text(""),
                     "B": _sha256_text(file_block),

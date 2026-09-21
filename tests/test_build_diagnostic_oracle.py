@@ -2,6 +2,11 @@
 
 The generator is the only place that decides what conditions B and C show, so these tests run it as
 a subprocess on a synthetic task and check the artifacts it writes, rather than trusting a helper.
+
+`test_a_far_apart_second_hunk_is_never_dropped` is the regression test for a real defect: the first
+window rule took the union from the first hunk to the last and truncated the tail, so a file whose
+hunks sat far apart showed the first region and silently hid the second - on `getmoto__moto-7514`
+that hid the whole function the failing tests exercise.
 """
 
 from __future__ import annotations
@@ -18,9 +23,10 @@ from tempfile import TemporaryDirectory
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "build_diagnostic_oracle.py"
 SECTION = re.compile(
     r"^----- (?P<path>.+?) \(base commit (?P<commit>[0-9a-f]+), "
-    r"lines (?P<first>\d+)-(?P<last>\d+) of (?P<total>\d+)\)$",
+    r"lines (?P<spans>[\d,\- ]+?) of (?P<total>\d+)\)$",
     re.M,
 )
+NOT_SHOWN = re.compile(r"^\[lines (?P<first>\d+)-(?P<last>\d+) not shown", re.M)
 
 TASK_ID = "getmoto__moto-9999"
 BASE_COMMIT = "0" * 40
@@ -146,6 +152,20 @@ class BuildDiagnosticOracleTests(unittest.TestCase):
     def by_condition(self, records: list[dict], condition: str) -> dict:
         return next(record for record in records if record["condition"] == condition)
 
+    def window(self, records: list[dict], name: str) -> dict:
+        windows = self.by_condition(records, "C")["windows"]
+        return next(entry for entry in windows if entry["path"] == f"pkg/{name}")
+
+    def sections(self, message: str) -> list[tuple[re.Match, str]]:
+        matches = list(SECTION.finditer(message))
+        return [
+            (
+                match,
+                message[match.end() : matches[index + 1].start() if index + 1 < len(matches) else len(message)],
+            )
+            for index, match in enumerate(matches)
+        ]
+
     def test_condition_a_is_empty_and_b_lists_only_paths(self) -> None:
         records, _, _ = self.build()
         empty = self.by_condition(records, "A")
@@ -161,17 +181,52 @@ class BuildDiagnosticOracleTests(unittest.TestCase):
         records, _, source_root = self.build()
         message = self.by_condition(records, "C")["auxiliary_message"]
         self.assertIn("not produced by a tool call", message)
-        sections = list(SECTION.finditer(message))
-        self.assertEqual([match.group("path") for match in sections], ["pkg/mod.py", "pkg/second.py"])
-        for index, match in enumerate(sections):
-            end = sections[index + 1].start() if index + 1 < len(sections) else len(message)
-            pairs = re.findall(r"^(\d+): (.*)$", message[match.end() : end], re.M)
+        parsed = self.sections(message)
+        self.assertEqual([match.group("path") for match, _ in parsed], ["pkg/mod.py", "pkg/second.py"])
+        for match, body in parsed:
             lines = (
                 source_root / TASK_ID / match.group("path")
             ).read_text(encoding="utf-8").splitlines()
-            first, last = int(match.group("first")), int(match.group("last"))
             self.assertEqual(int(match.group("total")), len(lines))
-            self.assertEqual(pairs, [(str(number), lines[number - 1]) for number in range(first, last + 1)])
+            pairs = [
+                (int(number), text)
+                for number, text in re.findall(r"^(\d+): (.*)$", body, re.M)
+            ]
+            gaps = {(int(m.group("first")), int(m.group("last"))) for m in NOT_SHOWN.finditer(body)}
+            self.assertTrue(pairs, f"{match.group('path')} rendered nothing")
+            for number, text in pairs:
+                self.assertEqual(text, lines[number - 1])
+            shown = {number for number, _ in pairs}
+            for first, last in gaps:
+                self.assertFalse(shown & set(range(first, last + 1)))
+
+    def test_a_far_apart_second_hunk_is_never_dropped(self) -> None:
+        records, manifest, _ = self.build(pad=20, max_lines_per_file=50)
+        window = self.window(records, "mod.py")
+        covered = set()
+        for interval in window["intervals"]:
+            covered |= set(range(interval["first_line"], interval["last_line"] + 1))
+        self.assertIn(4, covered, "the first hunk must be shown")
+        self.assertIn(41, covered, "the second hunk must be shown even though it is far away")
+        self.assertTrue(window["hunks"][0]["new_start"] == 1)
+        self.assertEqual(manifest["tasks"][0]["hunks_not_covered"], [])
+        self.assertLess(window["padding"], 20)
+        self.assertFalse(window["truncated"])
+        self.assertEqual(window["padding"], 14)
+        self.assertEqual(window["shown_lines"], 49)
+        self.assertEqual(
+            [(i["first_line"], i["last_line"]) for i in window["intervals"]], [(1, 18), (27, 57)]
+        )
+
+    def test_a_hunk_is_kept_even_when_it_exceeds_the_cap(self) -> None:
+        records, manifest, _ = self.build(pad=20, max_lines_per_file=6)
+        window = self.window(records, "mod.py")
+        intervals = [(i["first_line"], i["last_line"]) for i in window["intervals"]]
+        self.assertEqual(intervals, [(1, 4), (41, 43)])
+        self.assertEqual(window["padding"], 0)
+        self.assertTrue(window["truncated"], "over-cap files must say so")
+        self.assertEqual(window["shown_lines"], 7)
+        self.assertEqual(manifest["tasks"][0]["hunks_not_covered"], [])
 
     def test_no_added_line_is_shown_and_undisclosed_overlap_is_reported(self) -> None:
         records, manifest, _ = self.build(include_marker=False)
@@ -186,47 +241,28 @@ class BuildDiagnosticOracleTests(unittest.TestCase):
         message = self.by_condition(records, "C")["auxiliary_message"]
         self.assertIn(SECOND_ADDED, message)
         disclosure = manifest["tasks"][0]["added_line_disclosure"]["C"]
-        texts = {entry["text"] for entry in disclosure}
-        self.assertIn(SECOND_ADDED, texts)
         entry = next(item for item in disclosure if item["text"] == SECOND_ADDED)
-        self.assertEqual(
-            entry["in_window_at"], [{"path": "pkg/second.py", "base_line": 5}]
-        )
+        self.assertEqual(entry["in_window_at"], [{"path": "pkg/second.py", "base_line": 5}])
         self.assertEqual(self.by_condition(records, "C")["added_line_disclosure"], disclosure)
 
-    def test_padding_shrinks_before_any_hunk_is_dropped(self) -> None:
-        records, _, _ = self.build(pad=20, max_lines_per_file=70)
-        window = next(record["windows"][0] for record in records if record["condition"] == "C")
-        self.assertEqual((window["first_line"], window["last_line"], window["padding"]), (1, 60, 20))
-        self.assertFalse(window["truncated"])
-        records, _, _ = self.build(pad=20, max_lines_per_file=50)
-        window = next(
-            record["windows"][0]
-            for record in records
-            if record["condition"] == "C"
-        )
-        self.assertLess(window["padding"], 20)
-        self.assertFalse(window["truncated"])
-        self.assertEqual((window["first_line"], window["last_line"]), (1, 50))
-        records, _, _ = self.build(pad=20, max_lines_per_file=10)
-        window = next(
-            record["windows"][0] for record in records if record["condition"] == "C"
-        )
-        self.assertEqual(window["padding"], 0)
-        self.assertTrue(window["truncated"])
-        self.assertEqual((window["first_line"], window["last_line"]), (1, 10))
-
     def test_total_line_budget_skips_the_rest_and_records_it(self) -> None:
-        _, manifest, _ = self.build(max_total_lines=30, max_lines_per_file=30)
+        _, manifest, _ = self.build(max_total_lines=8, max_lines_per_file=30, pad=0)
         entry = manifest["tasks"][0]
         self.assertEqual(entry["files_with_windows"], ["pkg/mod.py"])
-        self.assertEqual(entry["skipped"], [{"path": "pkg/second.py", "reason": "total line budget reached"}])
+        self.assertEqual(
+            entry["skipped"], [{"path": "pkg/second.py", "reason": "total line budget reached"}]
+        )
+        # The skipped file's hunk is reported rather than silently absent.
+        self.assertEqual(
+            entry["hunks_not_covered"], [{"path": "pkg/second.py", "new_start": 1, "new_end": 3}]
+        )
 
     def test_missing_source_is_reported_rather_than_invented(self) -> None:
         records, manifest, _ = self.build(seed_source=False)
         self.assertEqual(manifest["tasks"][0]["files_with_windows"], [])
         reasons = {item["reason"] for item in manifest["tasks"][0]["skipped"]}
         self.assertEqual(reasons, {"source unavailable at the base commit"})
+        self.assertEqual(manifest["tasks"][0]["hunks_not_covered_count"], 3)
         message = self.by_condition(records, "C")["auxiliary_message"]
         self.assertNotIn("-----", message)
         # C stays a superset of B: the unreadable files are still named.
@@ -240,9 +276,7 @@ class BuildDiagnosticOracleTests(unittest.TestCase):
         for record in records:
             digest = hashlib.sha256(record["auxiliary_message"].encode("utf-8")).hexdigest()
             self.assertEqual(record["auxiliary_sha256"], digest)
-            key = record["condition"]
-            self.assertEqual(entry["auxiliary_sha256"][key], digest)
-            self.assertEqual(entry["skipped"], [])
+            self.assertEqual(entry["auxiliary_sha256"][record["condition"]], digest)
         self.assertTrue(manifest["run_complete"])
         self.assertEqual(
             manifest["output_sha256"],

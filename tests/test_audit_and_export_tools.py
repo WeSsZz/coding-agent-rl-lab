@@ -9,7 +9,81 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.audit_swe_gym_test_command import build_command  # noqa: E402
+from scripts.audit_swe_gym_test_command import (  # noqa: E402
+    build_command,
+    parse_prefixes,
+    prefix_for,
+)
+
+
+class ParsePrefixesTests(unittest.TestCase):
+    def test_a_bare_entry_becomes_the_default(self) -> None:
+        scoped, default = parse_prefixes(["/opt/pytest -rA"])
+
+        self.assertEqual(scoped, {})
+        self.assertEqual(default, ("/opt/pytest", "-rA"))
+
+    def test_a_scoped_entry_is_keyed_by_repo_and_version(self) -> None:
+        # The scope is `<repo>/<version>=<command>`, and the repo itself contains a slash, so the
+        # split has to happen on the last slash.
+        scoped, default = parse_prefixes(["conan-io/conan/2.0=/opt/pytest -n0"])
+
+        self.assertIsNone(default)
+        self.assertEqual(scoped[("conan-io/conan", "2.0")], ("/opt/pytest", "-n0"))
+
+    def test_a_misspelled_scope_fails_loudly_at_selection_time(self) -> None:
+        # `conan-io/conan=2.0=...` would key on ("conan-io", "conan"), which matches no row.
+        scoped, default = parse_prefixes(["conan-io/conan=2.0=/opt/pytest"])
+
+        self.assertIsNone(default)
+        with self.assertRaises(ValueError):
+            prefix_for({"repo": "conan-io/conan", "version": "2.0"}, scoped, default)
+
+    def test_two_repositories_can_carry_different_prefixes(self) -> None:
+        # The real case: conan's image has xdist so `-n0` is fine, pydantic's does not.
+        scoped, default = parse_prefixes(
+            [
+                "conan-io/conan/2.0=/opt/pytest -n0 -rA",
+                "pydantic/pydantic/2.7=/opt/pytest -rA -p no:pretty",
+            ]
+        )
+
+        self.assertIsNone(default)
+        self.assertEqual(scoped[("conan-io/conan", "2.0")], ("/opt/pytest", "-n0", "-rA"))
+        self.assertEqual(
+            scoped[("pydantic/pydantic", "2.7")],
+            ("/opt/pytest", "-rA", "-p", "no:pretty"),
+        )
+
+    def test_two_unscoped_entries_are_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_prefixes(["/a", "/b"])
+
+    def test_no_entries_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_prefixes([])
+
+
+class PrefixSelectionTests(unittest.TestCase):
+    def test_a_scoped_prefix_wins_over_the_default(self) -> None:
+        scoped, default = parse_prefixes(["/default", "acme/widget/1.0=/scoped"])
+
+        chosen = prefix_for({"repo": "acme/widget", "version": "1.0"}, scoped, default)
+
+        self.assertEqual(chosen, ("/scoped",))
+
+    def test_an_unmatched_repository_falls_back_to_the_default(self) -> None:
+        scoped, default = parse_prefixes(["/default", "acme/widget/1.0=/scoped"])
+
+        chosen = prefix_for({"repo": "other/thing", "version": "9"}, scoped, default)
+
+        self.assertEqual(chosen, ("/default",))
+
+    def test_no_default_and_no_match_is_an_error_rather_than_a_silent_skip(self) -> None:
+        scoped, default = parse_prefixes(["acme/widget/1.0=/scoped"])
+
+        with self.assertRaises(ValueError):
+            prefix_for({"repo": "other/thing", "version": "9"}, scoped, default)
 
 
 class BuildCommandTests(unittest.TestCase):

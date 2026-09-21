@@ -16,10 +16,33 @@ class SWEGymAdapterError(ValueError):
 SWE_GYM_ENVIRONMENT_REVISION = "242429c188fcfd06aad13fce9a54d450470bf0ac"
 
 _AUDITED_TEST_COMMAND_PREFIXES: dict[tuple[str, str], tuple[str, ...]] = {
+    # Every prefix here is per repository/version because the instance images differ in which
+    # pytest plugins are installed, and two differences are load-bearing:
+    #   * `-n0` is an xdist flag; without xdist pytest exits 4 and runs nothing.
+    #   * an image shipping `pytest-pretty` replaces pytest's `FAILED <node>` short summary with
+    #     a boxed table, so `environment.failing_nodes` finds no failures at all.
+    # Each entry was verified by `scripts/audit_swe_gym_test_command.py`, which runs the command
+    # through the real adapter and provider and requires the baseline failing set to equal
+    # FAIL_TO_PASS exactly. The moto entry predates that script and is deliberately unchanged so
+    # existing route-v1 records keep matching the command they were produced with.
     ("getmoto/moto", "5.0"): (
         "/opt/miniconda3/envs/testbed/bin/pytest",
         "-n0",
         "-rA",
+    ),
+    ("conan-io/conan", "2.0"): (
+        "/opt/miniconda3/envs/testbed/bin/pytest",
+        "-n0",
+        "-rA",
+        "-p",
+        "no:pretty",
+    ),
+    ("pydantic/pydantic", "2.7"): (
+        # No `-n0`: this image has no xdist, and pytest exits 4 with it.
+        "/opt/miniconda3/envs/testbed/bin/pytest",
+        "-rA",
+        "-p",
+        "no:pretty",
     ),
 }
 

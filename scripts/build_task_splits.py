@@ -357,13 +357,34 @@ def render_summary(manifest: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_image_list(manifest: dict[str, Any], *, splits: tuple[str, ...]) -> str:
+    """One image per line, for `scripts/vm/pull_task_images.sh` to pre-pull on the worker.
+
+    Pre-pulling is mandatory rather than an optimisation: the worker's `registry-1.docker.io`
+    is DNS-poisoned, so a container start cannot fetch a missing image, and a rollout would
+    fail as an infrastructure error instead of a policy error.
+    """
+
+    wanted = set(splits)
+    images = sorted(
+        {item["image"] for item in manifest["instances"] if item["split"] in wanted}
+    )
+    return "\n".join(images) + "\n"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shard", type=Path, default=REPOSITORY_ROOT / "work/private/swe-gym-train-rows.parquet")
     parser.add_argument("--output", type=Path, default=REPOSITORY_ROOT / "manifests/route-v2-task-split.json")
     parser.add_argument("--summary", type=Path)
+    parser.add_argument(
+        "--image-list",
+        dest="image_list",
+        type=Path,
+        help="write the images the train and final-test splits need, one per line",
+    )
     parser.add_argument("--salt", default=DEFAULT_SALT)
-    parser.add_argument("--train", type=int, default=24)
+    parser.add_argument("--train", type=int, default=12)
     parser.add_argument(
         "--final-test",
         dest="final_test",
@@ -460,6 +481,11 @@ def main(argv: list[str] | None = None) -> int:
         arguments.summary.parent.mkdir(parents=True, exist_ok=True)
         arguments.summary.write_text(summary, encoding="utf-8")
         print(f"wrote {arguments.summary}")
+    if arguments.image_list:
+        images = render_image_list(manifest, splits=("development", "train", "final-test"))
+        arguments.image_list.parent.mkdir(parents=True, exist_ok=True)
+        arguments.image_list.write_text(images, encoding="utf-8")
+        print(f"wrote {arguments.image_list} ({len(images.splitlines())} images)")
     print(f"wrote {arguments.output}")
     return 0
 

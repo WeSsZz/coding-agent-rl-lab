@@ -56,6 +56,10 @@ def build_command(prefix: tuple[str, ...], fail_to_pass: tuple[str, ...], pass_t
     return (*prefix, "--", *targets)
 
 
+def _tail(text: str, limit: int = 2000) -> str:
+    return text if len(text) <= limit else "..." + text[-limit:]
+
+
 def audit_one(row: dict[str, Any], prefix: tuple[str, ...], timeout: int) -> dict[str, Any]:
     adapter = SWEGymTaskAdapter()
     fail_to_pass = tuple(row["FAIL_TO_PASS"])
@@ -93,6 +97,13 @@ def audit_one(row: dict[str, Any], prefix: tuple[str, ...], timeout: int) -> dic
             (not baseline.passed)
             and set(baseline_nodes) == set(fail_to_pass)
         )
+        if not record["verified"]:
+            # A non-zero exit with no `FAILED <node>` line means pytest never got as far as
+            # reporting those nodes - a collection error, a usage error, or missing paths.
+            # Without the raw output that is indistinguishable from "the test passed", so the
+            # tool keeps a bounded tail of both streams whenever it cannot verify.
+            record["baseline_stdout_tail"] = _tail(baseline.stdout)
+            record["baseline_stderr_tail"] = _tail(baseline.stderr)
     except Exception as exc:  # the audit must record every failure mode, not abort the sweep
         record["error"] = f"{type(exc).__name__}: {exc}"
         record["verified"] = False
@@ -110,11 +121,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rows", type=Path, required=True)
     parser.add_argument(
         "--prefix",
+        action="append",
         required=True,
+        dest="prefixes",
+        metavar="[repo/version=]COMMAND",
         help=(
-            "the candidate pytest invocation without the test nodes, as one shell-quoted "
-            "string, e.g. '/opt/miniconda3/envs/testbed/bin/pytest -n0 -rA'. It is one string "
-            "because a pytest prefix contains options argparse would otherwise try to parse."
+            "a candidate pytest invocation without the test nodes, as one shell-quoted string, "
+            "e.g. '/opt/miniconda3/envs/testbed/bin/pytest -n0 -rA'. Scope it to one repository "
+            "with 'repo/version=...'; an unscoped entry is the default for rows nothing scoped "
+            "matches. Repeatable. Per-repository scoping is necessary, not cosmetic: images "
+            "differ in which plugins are installed, so '-n0' (an xdist flag) makes pytest exit 4 "
+            "on an image without xdist. It is one string because a pytest prefix contains "
+            "options argparse would otherwise try to parse."
         ),
     )
     parser.add_argument("--output", type=Path, required=True)
@@ -128,6 +146,43 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def parse_prefixes(
+    entries: list[str],
+) -> tuple[dict[tuple[str, str], tuple[str, ...]], tuple[str, ...] | None]:
+    scoped: dict[tuple[str, str], tuple[str, ...]] = {}
+    default: tuple[str, ...] | None = None
+    for entry in entries:
+        key, separator, value = entry.partition("=")
+        if separator and "/" in key:
+            # Repository names contain a slash (`conan-io/conan`), so scope on the LAST one.
+            repo, _, version = key.rpartition("/")
+            if not repo or not version:
+                raise ValueError(f"malformed prefix scope {key!r}; expected repo/version")
+            scoped[(repo, version)] = tuple(shlex.split(value))
+            continue
+        if default is not None:
+            raise ValueError("at most one unscoped --prefix is allowed")
+        default = tuple(shlex.split(entry))
+    if default is not None and not default:
+        raise ValueError("an unscoped --prefix must not be empty")
+    if not scoped and default is None:
+        raise ValueError("at least one --prefix is required")
+    return scoped, default
+
+
+def prefix_for(
+    row: dict[str, Any],
+    scoped: dict[tuple[str, str], tuple[str, ...]],
+    default: tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    found = scoped.get((row["repo"], row["version"]))
+    if found:
+        return found
+    if default is None:
+        raise ValueError(f"no prefix for {row['repo']}@{row['version']} and no default was given")
+    return default
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     rows = [json.loads(line) for line in arguments.rows.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -138,13 +193,13 @@ def main(argv: list[str] | None = None) -> int:
         print("FAILED  no rows to audit")
         return 1
 
-    prefix = tuple(shlex.split(arguments.prefix))
-    if not prefix:
-        print("FAILED  --prefix is empty")
-        return 1
+    scoped, default = parse_prefixes(arguments.prefixes)
+
     records = []
     for row in rows:
+        prefix = prefix_for(row, scoped, default)
         print(f"[audit] {row['instance_id']} ({row['repo']}@{row['version']})")
+        print(f"        prefix: {' '.join(prefix)}")
         record = audit_one(row, prefix, arguments.test_timeout_seconds)
         records.append(record)
         status = "verified" if record["verified"] else "NOT verified"
@@ -156,7 +211,8 @@ def main(argv: list[str] | None = None) -> int:
 
     report = {
         "schema_version": 1,
-        "prefix": list(prefix),
+        "prefixes": {f"{repo}/{version}": list(value) for (repo, version), value in sorted(scoped.items())},
+        "default_prefix": list(default) if default else None,
         "audited_at": "2026-09-22",
         "verified": sum(1 for record in records if record["verified"]),
         "total": len(records),

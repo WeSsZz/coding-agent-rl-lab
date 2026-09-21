@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "manifest_id": "route-v2-tool-protocol",
+  "generated_at": "2026-09-22",
+  "status": "adopted",
+  "decision": "Adopt the OpenHands v0.54.0 function-calling tool schema verbatim instead of designing one. The project rule is that a tool protocol, a data-generation method, a reward scheme and an optimiser are not all invented at once; this manifest removes the protocol from that list.",
+  "why_this_protocol": [
+    "It is a real, widely used protocol rather than this project's design.",
+    "Real multi-turn trajectories exist in exactly this format: nebius/SWE-rebench-openhands-trajectories, cc-by-4.0, 32161 successful trajectories over 1823 repositories, OpenHands v0.54.0, function calling.",
+    "Qwen3-8B's own chat template renders tools natively (verified: the template contains a tools branch and <tool_call>/<tool_response> markers).",
+    "The upstream veRL SWE-agent recipe uses a subprocess plus text proxy, which forces re-tokenisation; adopting a function-calling schema lets the agent loop stay token-in/token-out."
+  ],
+  "source": {
+    "dataset_id": "nebius/SWE-rebench-openhands-trajectories",
+    "dataset_sha": "35455389ab51bf5e2306bfd436ef72d0f98bf882",
+    "license": "cc-by-4.0",
+    "file": "tools.json",
+    "file_bytes": 18512,
+    "retrieved_via": "https://hf-mirror.com/datasets/nebius/SWE-rebench-openhands-trajectories/resolve/main/tools.json",
+    "retrieved_at": "2026-09-22",
+    "note": "huggingface.co is unreachable from this project's machines; hf-mirror.com is reachable and served this file. The dataset sha above comes from the mirror's dataset API, not from a signed manifest."
+  },
+  "tools": [
+    {
+      "name": "execute_bash",
+      "required": ["command"],
+      "properties": {
+        "command": "string",
+        "is_input": {"enum": ["true", "false"]},
+        "timeout": "number"
+      },
+      "role": "run one bash command in a persistent shell session inside the task container"
+    },
+    {
+      "name": "str_replace_editor",
+      "required": ["command", "path"],
+      "properties": {
+        "command": {"enum": ["view", "create", "str_replace", "insert", "undo_edit"]},
+        "path": "string",
+        "file_text": "string",
+        "old_str": "string",
+        "new_str": "string",
+        "insert_line": "integer",
+        "view_range": "array"
+      },
+      "role": "view, create and edit files"
+    },
+    {
+      "name": "think",
+      "required": ["thought"],
+      "properties": {"thought": "string"},
+      "role": "log a thought, no side effect"
+    },
+    {
+      "name": "finish",
+      "required": ["message"],
+      "properties": {"message": "string"},
+      "role": "signal task completion; terminates the episode"
+    },
+    {
+      "name": "task_tracker",
+      "required": ["command"],
+      "properties": {
+        "command": {"enum": ["view", "plan"]},
+        "task_list": "array"
+      },
+      "role": "optional structured task list; no repository side effect"
+    }
+  ],
+  "adopted_subset": {
+    "primary": ["execute_bash", "str_replace_editor", "think", "finish"],
+    "optional": ["task_tracker"],
+    "reason": "The first four are the ones the environment must actually execute. task_tracker is pure bookkeeping and can be admitted or dropped without changing what the sandbox does; the choice must be recorded per experiment because it changes the action space."
+  },
+  "consequences_for_this_project": [
+    "The old restricted 7-action JSON protocol (list_files/search_text/read_file/replace_text/replace_lines/run_tests/finish) is NOT the new route's protocol. It stays in the tree, frozen, and is never mixed with this one.",
+    "`execute_bash` requires a real shell inside the task container. The container already runs with --network none, --cap-drop ALL, --pids-limit, memory and CPU caps and no host mounts, so the shell is confined to the task container.",
+    "Because the agent can now write anywhere including the verifier's test files, correctness can no longer be enforced by a read-only guard on those paths. The reward must instead be computed the way SWE-bench does it: extract the agent's patch, apply it together with the official test patch to a clean checkout, and grade there. Blocking edits was the wrong mechanism; grading on a clean tree is the right one.",
+    "The old guards (read-before-edit, duplicate-action refusal, premature-finish refusal) must NOT be carried over: the A/B/C audit showed they caused 10 of 18 first failures, and they would put the RL action distribution out of line with the SFT trajectories, which were produced without them."
+  ],
+  "unverified": [
+    "The exact `system`/`instance`/`next-step` prompt templates used by OpenHands v0.54.0 are NOT in tools.json. They must be read from the trajectory rows themselves before SFT rendering is written.",
+    "Whether Qwen3-8B emits this schema reliably under the pinned template has not been tested on a GPU.",
+    "The observations' exact text layout (truncation markers, exit-code framing) has not been inspected in a real row yet."
+  ]
+}

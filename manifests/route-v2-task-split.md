@@ -1,0 +1,49 @@
+# route-v2 task split (provisional)
+
+- **train**: 24 instances, audited test command on 11, repos {'conan-io/conan': 10, 'getmoto/moto': 11, 'pydantic/pydantic': 3}
+    - `conan-io__conan-13230` conan-io/conan@2.0 f2p=1 p2p=34 (unaudited)
+    - `conan-io__conan-13450` conan-io/conan@2.0 f2p=1 p2p=9 (unaudited)
+    - `conan-io__conan-13610` conan-io/conan@2.0 f2p=1 p2p=1 (unaudited)
+    - `conan-io__conan-13721` conan-io/conan@2.0 f2p=1 p2p=6 (unaudited)
+    - `conan-io__conan-14051` conan-io/conan@2.0 f2p=1 p2p=15 (unaudited)
+    - `conan-io__conan-14362` conan-io/conan@2.0 f2p=2 p2p=32 (unaudited)
+    - `conan-io__conan-14397` conan-io/conan@2.0 f2p=2 p2p=2 (unaudited)
+    - `conan-io__conan-14616` conan-io/conan@2.0 f2p=2 p2p=34 (unaudited)
+    - `conan-io__conan-15007` conan-io/conan@2.0 f2p=1 p2p=6 (unaudited)
+    - `conan-io__conan-15121` conan-io/conan@2.0 f2p=1 p2p=3 (unaudited)
+    - `getmoto__moto-7317` getmoto/moto@5.0 f2p=1 p2p=52
+    - `getmoto__moto-7324` getmoto/moto@5.0 f2p=2 p2p=40
+    - `getmoto__moto-7335` getmoto/moto@5.0 f2p=2 p2p=20
+    - `getmoto__moto-7336` getmoto/moto@5.0 f2p=5 p2p=16
+    - `getmoto__moto-7347` getmoto/moto@5.0 f2p=2 p2p=3
+    - `getmoto__moto-7348` getmoto/moto@5.0 f2p=1 p2p=40
+    - `getmoto__moto-7371` getmoto/moto@5.0 f2p=2 p2p=55
+    - `getmoto__moto-7524` getmoto/moto@5.0 f2p=1 p2p=18
+    - `getmoto__moto-7579` getmoto/moto@5.0 f2p=3 p2p=28
+    - `getmoto__moto-7584` getmoto/moto@5.0 f2p=1 p2p=19
+    - `getmoto__moto-7635` getmoto/moto@5.0 f2p=1 p2p=20
+    - `pydantic__pydantic-9004` pydantic/pydantic@2.7 f2p=1 p2p=60 (unaudited)
+    - `pydantic__pydantic-9170` pydantic/pydantic@2.7 f2p=1 p2p=17 (unaudited)
+    - `pydantic__pydantic-9214` pydantic/pydantic@2.7 f2p=1 p2p=54 (unaudited)
+- **development**: 10 instances, audited test command on 10, repos {'getmoto/moto': 10}
+    - `getmoto__moto-7365` getmoto/moto@5.0 f2p=1 p2p=1
+    - `getmoto__moto-7385` getmoto/moto@5.0 f2p=2 p2p=0
+    - `getmoto__moto-7393` getmoto/moto@5.0 f2p=1 p2p=0
+    - `getmoto__moto-7446` getmoto/moto@5.0 f2p=2 p2p=5
+    - `getmoto__moto-7509` getmoto/moto@5.0 f2p=1 p2p=2
+    - `getmoto__moto-7514` getmoto/moto@5.0 f2p=3 p2p=7
+    - `getmoto__moto-7537` getmoto/moto@5.0 f2p=1 p2p=0
+    - `getmoto__moto-7607` getmoto/moto@5.0 f2p=1 p2p=2
+    - `getmoto__moto-7608` getmoto/moto@5.0 f2p=2 p2p=3
+    - `getmoto__moto-7646` getmoto/moto@5.0 f2p=1 p2p=2
+- **final-test**: 8 instances, audited test command on 5, repos {'conan-io/conan': 2, 'getmoto/moto': 5, 'pydantic/pydantic': 1}
+    - `conan-io__conan-10975` conan-io/conan@2.0 f2p=1 p2p=12 (unaudited)
+    - `conan-io__conan-13757` conan-io/conan@2.0 f2p=1 p2p=36 (unaudited)
+    - `getmoto__moto-7303` getmoto/moto@5.0 f2p=1 p2p=34
+    - `getmoto__moto-7382` getmoto/moto@5.0 f2p=1 p2p=40
+    - `getmoto__moto-7566` getmoto/moto@5.0 f2p=4 p2p=13
+    - `getmoto__moto-7567` getmoto/moto@5.0 f2p=2 p2p=46
+    - `getmoto__moto-7580` getmoto/moto@5.0 f2p=1 p2p=11
+    - `pydantic__pydantic-8947` pydantic/pydantic@2.7 f2p=3 p2p=44 (unaudited)
+
+pool: {'pool_instances': 63, 'pool_units': 60, 'pool_near_duplicate_groups': 3, 'pool_instances_in_a_duplicate_group': 6, 'unplaced_units': 20, 'development_from_route_v1': 10, 'cost_filter_dropped': {'pass_to_pass_over_cap': 25, 'fail_to_pass_over_cap': 4}, 'pool_instances_after_cost_filter': 63}

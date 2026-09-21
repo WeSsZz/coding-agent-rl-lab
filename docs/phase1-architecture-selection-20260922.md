@@ -91,18 +91,40 @@ recipe/swe_agent/{swe_agent_loop.py, model_proxy.py, subprocess_runner.py,
 在 Docker 容器里跑 `sweagent run` 子进程 → 子进程把 OpenAI Chat 请求打到代理 →
 代理转给 veRL 的 vLLM 做 on-policy 生成 → 结束后用 patch 与参考 patch 比对算奖励 → 返回 `AgentLoopOutput`。
 
-**采用它的什么，不采用它的什么：**
+**采用它的什么，不采用它的什么**（本节在读完其源码后**修正过一次**，见下方"修正"）：
 
 | 采用 | 不采用 | 理由 |
 | --- | --- | --- |
-| "每一 token 都必须来自当前策略"这条硬要求 | 用子进程 + 文本 HTTP 往返的架构 | 子进程只说文本，loop 必须**重新分词**去还原 `response_ids`；这正是 veRL 官方文档警告的"decode-encode 不一致会让轨迹偏离策略分布"的形态。我们不需要冒这个险，因为工具是我们自己的代码，可以直接 token-in/token-out |
-| "RL 训练中绝不允许改写历史 observation"这条明确警告 | 它的合成数据集与 patch-diff 奖励 | 我们的奖励来自真实测试执行；patch 相似度不是正确性标准 |
-| 它验证过的工具集合与 agent 配置分层 | 它的硬件档位 | 它写的是 **8×NVIDIA GPU per node（RTX 3090 24GB 实测）**，单卡未验证 |
+| token-in / token-out 的生成路径 | 子进程 + 文本 HTTP 代理这一层 | 见"修正"：它的 id 确实来自进程内 `server_manager.generate`，但文本往返带来的对齐校验是**失败即整条作废**的，代价高且不必要——我们的工具是自己的代码，可以直接持有 token 流 |
+| "RL 训练中绝不允许改写历史 observation"这条明确警告 | 它的合成数据集与 patch-diff 奖励 | **它的奖励是把生成补丁与参考补丁做文本相似度，完全不读 pytest 结果**；这与本项目"执行反馈驱动"的要求直接冲突 |
+| 它的容器生命周期与配置分层思路 | 它的硬件档位与 token 预算 | 启动脚本把 `infer_tp`/`train_sp` 都设成 `GPUS_PER_NODE`，token 预算按 SP=8 标定；单卡不是被禁止，是**没被标定过** |
+| "每条轨迹的 alignment 失败必须显式处理"这条设计 | 它的失败处理方式 | 对齐失败时它返回 **1 个 pad token 且 mask=1**，也就是说坏轨迹会以退化样本进入训练，而不是被丢弃 |
+
+> **修正（2026-09-22，读完源码后）**：我最初写的是"它必须重新分词去还原 `response_ids`"——**这条不准确，予以更正**。
+> 实际机制是：vLLM 的 `output.token_ids` / `output.log_probs` 由**进程内**的 `server_manager.generate` 返回，
+> 直接以 mask=1 追加进训练序列；子进程只传文本，而 `TrajectoryReconstructor` 用**重渲染 chat template 后逐 token 相等**
+> 来校验"文本与 id 一致"，不一致就整条作废。所以它是 token-in/token-out **加上一道 fail-closed 的对齐闸门**，
+> 不是"靠重新分词还原"。这个区别影响我们参考它的深度：我们沿用其"生成路径直取 id"的部分，
+> 但**不沿用**其"回合间必须靠重渲染校验"的脆弱性——我们的 loop 自己持有 `prompt_ids`，tools 只回文本、
+> 由 loop 编码一次，不需要把整段历史重渲染来对账。
 
 > **上游文档原文警告（必须遵守）**：`last_n_observations` / `closed_window` 这类"动态改写历史
 > observation"的 history processor **不能**用于 RL，因为回滚修改历史会让 rollout 与 PPO 更新阶段的
 > token 序列不对齐，导致 **KL 爆炸、不收敛**。要控上下文只能用 `max_observation_length`
 > （**进入历史之前**截断）。
+
+**读源码得到的三个单卡约束**（直接进阶段 5 的调参清单）：
+
+1. 启动脚本里 `infer_tp=$GPUS_PER_NODE`、`train_sp=$GPUS_PER_NODE`，并把
+   `actor_max_token_len_per_gpu=2560` / `log_prob_max_token_len_per_gpu=5120` 按 **SP=8**
+   标定（注释原文 "With SP=8: effective limit = 2560*8 = 20480 tokens/micro-batch"）。
+   单卡时 SP 塌回 1，动态 batch 预算掉 8 倍，而 `max_prompt_length + max_response_length = 12288`，
+   于是微批退化到近乎一条序列、激活与 logit 显存尖峰。**必须重新标定，不能只改 `GPUS_PER_NODE=1`。**
+2. 它默认同时驻留 FSDP actor + vLLM + **KL reference**，且 `param_offload=false` /
+   `optimizer_offload=false`。8B × 3 放一张 96GB 卡是**算得出来的 OOM**，必须先开 offload 或减配。
+3. 沙箱内存默认 `--memory=8g`、每 worker 最多 32 并发，而我们的 VM 只有 **5GB 总内存**。
+   → **rollout 农场必须放在 GPU 机器上，不能放在这台 VM 上**；VM 只适合串行验证。
+
 
 ---
 
@@ -197,7 +219,7 @@ recipe/swe_agent/{swe_agent_loop.py, model_proxy.py, subprocess_runner.py,
 | 5 | **`data.return_raw_chat=true` 之下数据集需要哪些字段** | loop 依赖 `raw_prompt`；字段错就直接跑不起来 | 读 `RLHFDataset` 代码 + 用最小 parquet 在 CPU 上跑 `AgentLoopWorker` 的单测 |
 | 6 | **上游 recipe 的 token 还原方式** | 决定我们是"参考它"还是"避开它" | 读 `swe_agent_loop.py` 与 `trajectory.py`（下一步） |
 | 7 | **SWE-Gym 其他仓库镜像的 test command** | 现表只有 `getmoto/moto@5.0`；多仓库 split 需要逐个审计 | 在 VM 上拉 1–2 个新仓库镜像跑 baseline（纯 CPU） |
-| 8 | **HuggingFace 在本机与 VM 都不可达** | 模型/数据集下载通道未确认；veRL 也常从 HF 拉模型 | VM 上 `huggingface.co` 实测超时（本次已验证）；需要确认租卡机能否访问，否则要预置模型 |
+| 8 | **HuggingFace 直连在本机与 VM 都不可达** | 模型/数据集下载通道 | **已解决（2026-09-22 实测）**：`huggingface.co` curl 超时（000），但 **`hf-mirror.com` 可用**（HTTP 206），`modelscope.cn` 与清华 PyPI 镜像也可达。已用 hf-mirror 成功取到 `Qwen/Qwen3-8B` 的 `config.json` 与 `tokenizer_config.json`、`nebius/SWE-rebench-openhands-trajectories` 的 `README.md`/`tools.json` 与数据集 API。数据集与模型获取走 `HF_ENDPOINT=https://hf-mirror.com`。**租卡机是否同样可达 hf-mirror 必须开机后第一件事确认。** |
 
 ---
 

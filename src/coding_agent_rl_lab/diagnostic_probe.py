@@ -387,13 +387,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         task_set=args.task_set,
         task_ids=args.task_id,
     )
-    order = [task.task_id for task in rows]
     split = DatasetSplit.DEVELOPMENT
     adapter = SWEGymTaskAdapter(SWEGymAdapterConfig(max_steps=args.max_steps))
     bundles = tuple(
         adapter.adapt(row, split=split, test_command=audited_swe_gym_test_command(row))
         for row in rows
     )
+    order = [bundle.task.task_id for bundle in bundles]
     tasks_by_id = {bundle.task.task_id: bundle.task for bundle in bundles}
     plan = plan_trials(
         order,

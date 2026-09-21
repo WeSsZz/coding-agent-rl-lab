@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "manifest_id": "route-v2-gpu-instance",
+  "generated_at": "2026-09-22",
+  "supplied_by": "user, via the AutoDL instance detail panel (screenshot, 2026-09-22)",
+  "status": "configured, instance currently stopped",
+  "why_this_file_exists": "Phase 3 requires the environment to be fixed before any GPU time is spent. This records what was actually rented, and at what rate, so the budget report is arithmetic rather than recollection.",
+  "instance": {
+    "platform": "AutoDL",
+    "gpu": "NVIDIA RTX PRO 6000 (96 GB) x 1",
+    "cpu": "22 vCPU Intel Xeon Platinum 8470Q",
+    "memory_gib": 110,
+    "system_disk_gib": 30,
+    "data_disk": {
+      "free_gib": 50,
+      "paid_extra_gib": 31,
+      "total_gib": 81
+    },
+    "image": "QwenLM/Qwen2.5/Qwen2.5-ALL:v1",
+    "reported_cuda": 13,
+    "port_mapping": "none",
+    "billing": "pay as you go"
+  },
+  "rate": {
+    "cny_per_hour_options": [6.98, 7.35],
+    "rate_used_for_the_cap": 7.35,
+    "why_the_higher_one": "The panel shows two figures and the higher one is used everywhere so the cap cannot be exceeded by picking the wrong column."
+  },
+  "budget": {
+    "authorised_cap_cny": 40,
+    "planned_seconds": 14400,
+    "planned_seconds_hours": 4.0,
+    "planned_cost_cny_at_cap_rate": 29.4,
+    "headroom_hours_at_cap_rate": 5.44,
+    "auto_renew": false,
+    "stop_conditions": [
+      "step 1 (environment) not finished within 60 minutes",
+      "step 3 (SFT forward/backward) OOMs at the 8K length even after enabling offloads",
+      "any step fails twice with an unattributable infrastructure error",
+      "4 hours elapsed or CNY 40 spent, whichever comes first"
+    ]
+  },
+  "fit_against_the_pinned_stack": {
+    "cuda": {
+      "instance_reports": 13,
+      "pinned_stack_requires": "cu130 wheels (torch 2.11.0, vllm 0.24.0)",
+      "verdict": "compatible; no driver update and no veRL version change needed"
+    },
+    "disk": {
+      "needs": [
+        "Qwen3-8B bfloat16 weights, about 16 GB",
+        "veRL uv environment (torch 2.11 + vllm 0.24 + flash-attn + ray), roughly 25-30 GB including the wheel cache",
+        "task images, checkpoints and rollout artefacts"
+      ],
+      "risk": "the clone may carry roughly 40 GB of Qwen2.5-Coder weights from route v1, so the 81 GB data disk can be exhausted before the model is even fetched",
+      "mitigation": "scripts/gpu/slim_disk.sh runs BEFORE the model download and is a prerequisite, not an optimisation"
+    },
+    "memory_gib": {
+      "instance": 110,
+      "verdict": "ample for the rollout farm that will actually live here"
+    }
+  },
+  "architecture_constraint_this_settles": {
+    "statement": "Real repository execution stays on the Ubuntu worker, not on this box.",
+    "reason": "An AutoDL instance is itself a container, so nested Docker for per-task sandboxes is not reliable. The project already has the working shape: the training process reaches the Docker worker over a loopback SSH tunnel through the worker's HTTP API with a bearer token.",
+    "measured_worker_capacity": {
+      "measured_at": "2026-09-22",
+      "method": "scripts/vm/measure_container_concurrency.sh, 1/2/3/4/6 concurrent task containers, each running a real pytest collection",
+      "result": "0 failures at every level; peak per-container RSS about 80-81 MB; host available memory unchanged",
+      "correction_to_an_earlier_belief": "The project previously assumed the worker's 5 GB of RAM capped concurrency at about two containers because each container is started with --memory 2g. That is a ceiling, not a reservation: containers use about 80 MB each, so the memory limit is NOT the binding constraint.",
+      "still_unknown": "throughput under a real multi-step rollout, where containers are long-lived and run full pytest suites rather than a collection"
+    }
+  },
+  "unverified": [
+    "whether the clone actually carries route v1's data, and therefore how much slimming is needed",
+    "how long uv takes to materialise the veRL environment over this network",
+    "whether hf-mirror.com is reachable from the AutoDL box (it is from the Ubuntu worker)",
+    "whether one 96 GB card holds the FSDP actor, the vLLM rollout engine and the KL reference at once"
+  ]
+}

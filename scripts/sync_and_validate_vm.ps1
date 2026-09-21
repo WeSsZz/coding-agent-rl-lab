@@ -125,13 +125,16 @@ try {
         Write-Host "[run] $RemoteCommand"
         Invoke-Remote "cd $remoteRoot && timeout $TimeoutSeconds sh -c '$escaped'"
     } else {
-        Write-Host "[run] unittest suite"
+        Write-Host "[run] shell syntax, then the unittest suite"
         # Merge the remote suite's stderr into its stdout. One CLI test prints an argparse usage
         # message on stderr on purpose, and a native stderr stream here is what made PowerShell
         # report a passing suite as a failure.
+        #
+        # The shell syntax check runs first because `bash -n` only proves anything on Linux, and
+        # the GPU box is the worst possible place to discover a quoting error in scripts/gpu/.
         Invoke-Remote (
-            "cd $remoteRoot && PYTHONPATH=src timeout $TimeoutSeconds " +
-            "$Python -m unittest discover -s tests 2>&1"
+            "cd $remoteRoot && bash scripts/check_shell_syntax.sh . && PYTHONPATH=src " +
+            "timeout $TimeoutSeconds $Python -m unittest discover -s tests 2>&1"
         )
     }
 

@@ -9,9 +9,9 @@ import, copies it into an isolated /tmp directory on the VM, runs the unittest s
 and optionally runs the guarded real-Docker smoke test. Both the local bundle and the remote
 copies are removed afterwards, so a failed run does not leave state behind.
 
-The bundle must contain scripts, datasets and fixtures as well as src and tests: tests import
-`scripts.*` and read the fixtures, and their absence shows up as import errors rather than as
-test failures.
+The bundle must contain scripts, datasets, fixtures and manifests as well as src and tests: tests
+import `scripts.*`, read the fixtures, and read the committed manifests, and their absence shows up
+as import errors or assertion failures rather than as an obvious packaging error.
 
 .PARAMETER DockerIntegration
 Also run tests.test_docker_integration against the cached SWE-Gym base image.
@@ -55,6 +55,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# A CLI test deliberately prints an argparse usage message to stderr. Under PowerShell 7.4+ that
+# native stderr output can be promoted to a terminating error, which aborted this script after a
+# suite that had actually passed. Native exit codes are still checked explicitly below.
+$PSNativeCommandUseErrorActionPreference = $false
+
 foreach ($tool in "tar", "ssh", "scp") {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
         throw "$tool is required but was not found on PATH"
@@ -65,7 +70,7 @@ if (-not (Test-Path -LiteralPath $IdentityFile)) {
 }
 
 $repository = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
-$bundlePaths = @("src", "tests", "scripts", "datasets", "fixtures", "pyproject.toml")
+$bundlePaths = @("src", "tests", "scripts", "datasets", "fixtures", "manifests", "pyproject.toml")
 foreach ($relative in $bundlePaths) {
     if (-not (Test-Path -LiteralPath (Join-Path $repository $relative))) {
         throw "required bundle path is missing: $relative"
@@ -120,7 +125,13 @@ try {
         Invoke-Remote "cd $remoteRoot && timeout $TimeoutSeconds sh -c '$escaped'"
     } else {
         Write-Host "[run] unittest suite"
-        Invoke-Remote "cd $remoteRoot && PYTHONPATH=src timeout $TimeoutSeconds $Python -m unittest discover -s tests"
+        # Merge the remote suite's stderr into its stdout. One CLI test prints an argparse usage
+        # message on stderr on purpose, and a native stderr stream here is what made PowerShell
+        # report a passing suite as a failure.
+        Invoke-Remote (
+            "cd $remoteRoot && PYTHONPATH=src timeout $TimeoutSeconds " +
+            "$Python -m unittest discover -s tests 2>&1"
+        )
     }
 
     if ($DockerIntegration -and -not $RemoteCommand) {

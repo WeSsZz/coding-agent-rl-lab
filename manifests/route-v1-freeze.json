@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "manifest_id": "route-v1-freeze-20260922",
+  "route": "v1-custom-json-scaffold",
+  "status": "frozen",
+  "generated_at": "2026-09-22",
+  "generated_by": "phase-0 repository audit (docs/phase0-repo-audit-20260922.md)",
+  "source": {
+    "repository": "https://github.com/WeSsZz/coding-agent-rl-lab.git",
+    "frozen_commit": "27b86c2a24c9dc9c1eed7d5dafee8f7e7eb5388d",
+    "frozen_branch": "main",
+    "worktree_clean_at_audit": true,
+    "stashes": 0,
+    "successor_branch": "agentic-rl-mainline",
+    "repo_files": [
+      {
+        "repo_path": "src/coding_agent_rl_lab/model_policy.py",
+        "git_blob": "1b96fdc3afd72c562155186ffe3903ca35090de7",
+        "role": "strict JSON action protocol and versioned prompt",
+        "note": "blob is the frozen one; the successor branch raises PROMPT_VERSION to v25, see known_defects[0]"
+      },
+      {
+        "repo_path": "src/coding_agent_rl_lab/docker_environment.py",
+        "git_blob": "f6a8d238495e2bf0e2803b1e77273503a214898d",
+        "role": "docker sandbox lifecycle and the 7-action tool surface"
+      },
+      {
+        "repo_path": "src/coding_agent_rl_lab/swe_gym.py",
+        "git_blob": "411bbe56d2b3baa561306f081e2439fd036f44e0",
+        "role": "SWE-Gym row adapter, image naming, audited test command table"
+      },
+      {
+        "repo_path": "src/coding_agent_rl_lab/swe_gym_smoke.py",
+        "git_blob": "de6264abc0e3f272b84aeacbb46aa2988af56f2b",
+        "role": "the pinned 10-instance table and the 6/2/2 split"
+      },
+      {
+        "repo_path": "src/coding_agent_rl_lab/grpo_remote.py",
+        "git_blob": "4e48350b3c7dcdc66fcc64d7c0a8fd859f532439",
+        "role": "loopback HTTP worker bridge (session create / action / finalize)"
+      },
+      {
+        "repo_path": "src/coding_agent_rl_lab/reward_shaping.py",
+        "git_blob": "e1528d4bd921d877e8ffb873751dfdefa10639c2",
+        "role": "legacy-v1 and conservative-v2 reward versions"
+      },
+      {
+        "repo_path": "scripts/setup_autodl_grpo_env.sh",
+        "git_blob": "c0fe2ed99aeb9c6c03d256d1042a2a8a640e7268",
+        "role": "the only dependency pin that exists in the repository"
+      }
+    ]
+  },
+  "models": [
+    {
+      "role": "policy-under-training",
+      "id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+      "served_model_name_recorded": "not recorded in repository",
+      "notes": "single-GPU LoRA only; the SFT and GRPO reports record the local snapshot path, not a revision hash"
+    },
+    {
+      "role": "diagnostic-inference-only",
+      "id": "Qwen2.5-Coder-14B-Instruct",
+      "served_model_name_recorded": "Qwen2.5-Coder-14B-Instruct",
+      "notes": "clean base, no LoRA, no weight update; used for the A/B/C diagnostic only"
+    }
+  ],
+  "training": {
+    "sft": {
+      "framework": "trl SFTTrainer",
+      "pinned_version": "trl==1.12.0",
+      "loss": "completion-only",
+      "lora": {"r": 16, "lora_alpha": 32, "lora_dropout": 0.05, "target_modules": "all-linear"},
+      "steps_recorded": [1, 12, 20, 60],
+      "report": "remote-artifacts/sft-warm-start-v24-60step-training-report.json"
+    },
+    "grpo": {
+      "framework": "trl GRPOTrainer.environment_factory",
+      "pinned_version": "trl==1.12.0",
+      "use_vllm": false,
+      "generation_backend": "transformers generate with LoRA weights",
+      "num_generations_recorded": 2,
+      "optimizer_steps_recorded": 1,
+      "max_optimizer_steps_ever_run": 1,
+      "reports": [
+        "remote-artifacts/grpo-fixture-5090-step1-seed41003-training-report.json",
+        "remote-artifacts/grpo-shaped-dynamic-v2-sft60-7509-mb1-2x4096-seed70001-training-report.json",
+        "remote-artifacts/grpo-shaped-line-edit-sft60-7509-mb1-2x4096-seed70002-training-report.json"
+      ],
+      "reward_version_used_in_training": "legacy-v1",
+      "reward_version_used_in_evaluation": "conservative-v2"
+    }
+  },
+  "environment": {
+    "dataset_id": "SWE-Gym/SWE-Gym",
+    "dataset_revision": "bb94ed9",
+    "repo_pin": "getmoto/moto",
+    "version_pin": "5.0",
+    "image_convention": "xingyaoww/sweb.eval.x86_64.{instance_id with __ replaced by _s_}:latest",
+    "pytest_argv_form": "/opt/miniconda3/envs/testbed/bin/pytest -n0 -rA -- <FAIL_TO_PASS...> <PASS_TO_PASS...>",
+    "worker_host": "wesz@192.168.137.130 (Ubuntu, Docker 29.7.2, no GPU)",
+    "images_cached_on_worker": 10,
+    "image_size_bytes_each": 4230000000,
+    "pinned_tasks": [
+      {"instance_id": "getmoto__moto-7509", "base_commit": "b22683eb98cb3de13d44f5348665f44539afa36f", "split": "train", "offset": 148},
+      {"instance_id": "getmoto__moto-7365", "base_commit": "7f6c9cb1deafb280fe7fcc7551c38e397f11a706", "split": "train", "offset": 0},
+      {"instance_id": "getmoto__moto-7514", "base_commit": "f14749b6b5f072ae42d98939e3948e09cd0f6a20", "split": "train", "offset": 21},
+      {"instance_id": "getmoto__moto-7646", "base_commit": "98ad497eb4de25943ceadabe7c2c5c73cc810e27", "split": "train", "offset": 63},
+      {"instance_id": "getmoto__moto-7446", "base_commit": "b13e493823397d3c9aae3598b3b024307f6b0974", "split": "train", "offset": 115},
+      {"instance_id": "getmoto__moto-7607", "base_commit": "ca24f65f2ff415a7eb7eddcea3bd8173e5d5f920", "split": "train", "offset": 134},
+      {"instance_id": "getmoto__moto-7385", "base_commit": "6505971ecb0dda833b9828ba71522f2805655674", "split": "regression", "offset": 172},
+      {"instance_id": "getmoto__moto-7608", "base_commit": "62e44dbd336227c87ef0eca0bbcb64f29f203300", "split": "regression", "offset": 204},
+      {"instance_id": "getmoto__moto-7393", "base_commit": "dbfa456dda04f995479c995a361b60f521e1753e", "split": "held-out (contaminated)", "offset": 225},
+      {"instance_id": "getmoto__moto-7537", "base_commit": "d767a2799bb1a6a6f2ed05ceb7cbb0c789968b76", "split": "held-out", "offset": 297}
+    ],
+    "split_contamination": {
+      "getmoto__moto-7393": "declared held-out but repeatedly used as a development diagnostic task; must not be used for any held-out claim",
+      "getmoto__moto-7608": "declared regression but used as an A/B/C diagnostic condition task",
+      "getmoto__moto-7365": "declared train but also used as an A/B/C diagnostic condition task",
+      "getmoto__moto-7514": "declared train but also used as an A/B/C diagnostic condition task"
+    }
+  },
+  "external_artifacts": [
+    {"path": "work/private/pinned-gold-patches.json", "sha256": "e9db5177b0d7772f081e9fca54ad8ca41002aa2f976aedec37a57063e9e2b28b", "role": "reference patches used only for environment self-check and window geometry"},
+    {"path": "work/private/abc-diagnostic-oracle-20260922-v4.jsonl", "sha256": "59bead8955c074b9dd02f6f129bb0c2cb49febf36242e96b9eb0c7f6a65a8418", "role": "corrected A/B/C auxiliary input, generated but never used"},
+    {"path": "work/private/swe-gym-train-gold-sft-v1.jsonl", "sha256": "40e6a0d5d2451d3dae20d5c3ad03a469878136597526932a2d2a0f6fc2756b96", "role": "gold-hunk-derived SFT supervision; superseded, must not be reused as real trajectories"},
+    {"path": "work/private/swe-gym-train-rows.jsonl", "sha256": "6eb7cc4ad70f55f2f226f80cd9f4bb287dc7a60867b2fa809d5f0cb174bcf1d8", "role": "pinned raw SWE-Gym rows for the 10 instances"},
+    {"path": "work/private/gold-selfcheck-20260922.json", "sha256": "68c2a8d2025f844134a189ab6a1abaf6707730bc28f2f93aa385fc584a9485ae", "role": "fail-before / gold pass-after self-check for 7365, 7514, 7608"},
+    {"path": "work/private/repair-through-tools-20260922.json", "sha256": "8aa7b93a944d80e160329261529a1860398cabe4d56f6ec46c356276b6d09628", "role": "reference repair executed through the restricted edit tools, 3/3 reachable"},
+    {"path": "remote-artifacts/swe-gym-abc-diagnostic-20260922-trajectories.jsonl", "sha256": "736eee8ecc576070d384af9801d73785780811dd1c7293691bf80a08124a4f57", "role": "18 A/B/C trajectories, 0 infrastructure failures"},
+    {"path": "remote-artifacts/swe-gym-abc-diagnostic-20260922-report.json", "sha256": "86e40cd10ecd04fb1f49d896fdc36185d41ccab4bcdef0e9ec4dc6a2c0fa8d97", "role": "A/B/C aggregate report"},
+    {"path": "remote-artifacts/swe-gym-abc-diagnostic-20260922-manifest.json", "sha256": "44b33af0a7c77cfd97b38dd4db4dd3bf999c377ac500656b54b30bae48b492d4", "role": "frozen run manifest (model, prompt, decoding, seeds, order)"},
+    {"path": "remote-artifacts/sft-warm-start-v24-60step-adapter-config.json", "sha256": "0cdec8f0a7f486d49ca28ed85387945ffe0f6773a5fd806d86a552bd79d7df2d", "role": "the only recorded LoRA SFT adapter configuration"},
+    {"path": "snapshot-0038db4.tar", "sha256": "cc1cbd9239c0fbc2d86a10255b745ce2fe25dc79c087eb3250a35f0845c36c59", "role": "source snapshot with a per-file sha256 manifest"}
+  ],
+  "recorded_results": [
+    {"claim": "restricted docker sandbox reproduces fail-before and gold pass-after on 3 real SWE-Gym instances", "evidence": "work/private/gold-selfcheck-20260922.json; 3/3 verified"},
+    {"claim": "the reference repair completes through the restricted edit tools", "evidence": "work/private/repair-through-tools-20260922.json; 3/3 reachable"},
+    {"claim": "18 A/B/C trials completed with 0 infrastructure failures", "evidence": "remote-artifacts/swe-gym-abc-diagnostic-20260922-report.json"},
+    {"claim": "one real-SWE-Gym single-step LoRA GRPO update produced non-zero gradient", "evidence": "grpo-shaped-line-edit-sft60-7509-mb1-2x4096-seed70002-training-report.json: grad_norm=0.4935, reward=[0,0.15]"},
+    {"claim": "base and fixture-LoRA policies both score 0/8 on the frozen held-out set", "evidence": "remote-artifacts/swe-gym-held-out-base-seed51000-report.json, swe-gym-held-out-fixture-lora-seed51000-report.json"}
+  ],
+  "known_defects": [
+    {
+      "id": "prompt-version-aliasing",
+      "detail": "commit 27b86c2 changed _SYSTEM_PROMPT but left PROMPT_VERSION at 'coding-tools-json-v24', so one identifier named two different prompt texts; tests/test_model_policy.py already expected v25, leaving HEAD red (335 passed, 1 failed).",
+      "resolution": "successor branch sets PROMPT_VERSION to coding-tools-json-v25; historic trajectories keep v24"
+    },
+    {
+      "id": "undeclared-dependencies",
+      "detail": "pyproject.toml declares no dependencies; torch and peft come from the base image via --system-site-packages; a peft 0.21.0 overlay at /root/autodl-tmp is required but not recorded in the repository.",
+      "resolution": "open; must be replaced by an explicit pinned environment file before any new GPU run"
+    },
+    {
+      "id": "vllm-shadowed-by-sitecustomize",
+      "detail": "scripts/grpo_sitecustomize.py hides the vllm package from the training interpreter, so that interpreter can never use vLLM.",
+      "resolution": "not applicable to the successor route; recorded so the old route stays interpretable"
+    },
+    {
+      "id": "utf8-bom-in-test",
+      "detail": "commit 27b86c2 introduced a UTF-8 BOM at the head of tests/test_model_policy.py.",
+      "resolution": "cosmetic; left untouched to keep the frozen tree byte-identical"
+    }
+  ],
+  "unproven": [
+    "GRPO improves anything over SFT (no multi-step run exists; held-out is 0/8 for both base and LoRA)",
+    "multi-step GRPO is stable (max optimizer steps ever run is 1)",
+    "shaped partial rewards lead to real repair ability (paired experiments show more validated patches but also more new failures)",
+    "the 14B base is semantically incapable (explicitly retracted by the project's own audit; window defect not yet re-run)",
+    "SFT produced real repair behaviour (1/4 on a train curriculum, 0/4 on the full independent-seed task)",
+    "generalisation beyond getmoto/moto@5.0 (every pinned task is the same repository)",
+    "any cost or budget figure (the repository records durations, never a GPU rate)"
+  ]
+}

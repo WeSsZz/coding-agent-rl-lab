@@ -19,7 +19,12 @@ from .contracts import (
 )
 
 
-PROMPT_VERSION = "coding-tools-json-v24"
+#: `v24` is the system prompt as it stood up to and including `6b24a43` (the commit the A/B/C
+#: diagnostic manifest records). `27b86c2` added a `replace_lines` read-before-edit rule to
+#: `_SYSTEM_PROMPT` without changing this label, so one identifier named two different prompts.
+#: `v25` is that changed text; the test that pins this string was already updated by `27b86c2`.
+#: Historic trajectories therefore keep `v24`, and every run from here records `v25`.
+PROMPT_VERSION = "coding-tools-json-v25"
 
 #: Conservative characters-per-token used by the context preflight. Real code prompts
 #: tokenize denser than prose, so dividing by three refuses a request slightly before the

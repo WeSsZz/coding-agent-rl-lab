@@ -9,7 +9,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.build_task_splits import (  # noqa: E402
     ROUTE_V1_TOUCHED,
     apply_cost_filter,
+    apply_image_availability_filter,
     assign,
+    image_name,
     near_duplicate_groups,
     selection_key,
     text_hash,
@@ -156,6 +158,39 @@ class CostFilterTests(unittest.TestCase):
 
         with self.assertRaises(SplitError):
             apply_cost_filter([_row("wide", pass_to_pass=900)], max_pass_to_pass=80, max_fail_to_pass=8)
+
+
+class ImageAvailabilityTests(unittest.TestCase):
+    def test_the_image_name_follows_the_published_convention(self) -> None:
+        row = _row("conan-io__conan-10975", repo="conan-io/conan")
+
+        self.assertEqual(
+            image_name(row),
+            "xingyaoww/sweb.eval.x86_64.conan-io_s_conan-10975:latest",
+        )
+
+    def test_an_instance_whose_image_is_absent_is_dropped(self) -> None:
+        rows = [_row("a"), _row("b")]
+
+        kept, removed = apply_image_availability_filter(rows, {image_name(rows[0])})
+
+        self.assertEqual([row["instance_id"] for row in kept], ["b"])
+        self.assertEqual(removed, 1)
+
+    def test_an_empty_unavailable_set_changes_nothing(self) -> None:
+        rows = [_row("a"), _row("b")]
+
+        kept, removed = apply_image_availability_filter(rows, set())
+
+        self.assertEqual(len(kept), 2)
+        self.assertEqual(removed, 0)
+
+    def test_dropping_every_instance_is_an_error_not_an_empty_split(self) -> None:
+        from scripts.build_task_splits import SplitError
+
+        rows = [_row("a")]
+        with self.assertRaises(SplitError):
+            apply_image_availability_filter(rows, {image_name(rows[0])})
 
 
 class ValidationTests(unittest.TestCase):

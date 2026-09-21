@@ -9,7 +9,7 @@
 
 | 机器 | 角色 | 实测配置 |
 | --- | --- | --- |
-| Windows 工作站 | 编辑面；跑单元测试 | 仓库 `D:\Developer\coding-agent-rl-lab`；pytest 可用；**无 GPU**、**无外网直连** |
+| Windows 工作站 | 编辑面；跑单元测试 | 仓库 `D:\Developer\coding-agent-rl-lab`；pytest 可用；**外网直连不可用**（只有 harness 的抓取通道能出网）；**本机有一块 NVIDIA GeForce RTX 5070 Ti Laptop GPU，12 GB 显存，驱动 596.49 / CUDA 13.2**，但 **WSL 未安装、Windows 上没有 docker CLI**，所以这块卡目前**不能**用来跑 veRL/vLLM 栈；12 GB 也装不下 8B 训练 |
 | Ubuntu VM `wesz@192.168.137.130` | **权威测试环境 + Docker worker**；执行真实 SWE-Gym 容器 | Ubuntu 26.04 / 内核 7.0.0-31 / Docker **29.7.2** / **8 vCPU** / **5 GB RAM** / 根分区 97 GB（已用 23 GB，余 70 GB）/ **无 GPU** |
 | AutoDL GPU 实例 | 模型推理与训练 | **当前未开机**；历史记录为 RTX 4090 48G / RTX 5090 / RTX 3090 等，**无费率记录** |
 
@@ -158,3 +158,13 @@ bash scripts/vm/run_test_command_audit.sh
 - [ ] 租卡机能否访问 Docker Hub 或是否需要同样的 mirror 方案
 - [ ] VM 上并发 2 / 4 个任务容器的内存与 CPU 实测曲线（决定 rollout 吞吐）
 - [ ] `xingyaoww/*` 各仓库镜像的官方 digest（用于把上面的可信度限制补掉）
+- [x] ~~VM 上停着的镜像是否够用~~ → **不够**：冻结的 split 需要 31 个镜像，VM 上只有 10 个（dev 全部在位）。
+      新增的 21 个必须先拉取；`scripts/vm/pull_task_images.sh` 接受
+      `build_task_splits.py --image-list` 产出的清单，会跳过已存在的。
+      注意 `dockerproxy.net` 对 `docker.m.daocloud.io` 覆盖不到的镜像会返回 not found，
+      而 `docker.1panel.live` 能服务但明显更慢（单镜像 >180 s）。
+- [ ] **镜像是否真实存在：尚未查清。** `scripts/vm/check_images_exist.sh` 跑了一部分就被停掉，
+      部分结论是 **UNKNOWN 3 / MISSING 0**——UNKNOWN 表示两个 mirror 都没有给出干净的
+      "not found"（多为超时），**不等于镜像不存在**。上游文档称 SWE-Gym 有 38 个实例从未发布镜像，
+      所以在正式拉取前必须把这道检查跑完，或直接以 pull 结果为准。
+      **当前 split 的 21 个新镜像的可用性属于未验证。**

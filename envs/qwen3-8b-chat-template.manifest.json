@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "manifest_id": "qwen3-8b-chat-template",
+  "generated_at": "2026-09-22",
+  "model_id": "Qwen/Qwen3-8B",
+  "revision": "main",
+  "source": {
+    "file": "tokenizer_config.json",
+    "local_copy_sha256": "d5d09f07b48c3086c508b30d1c9114bd1189145b74e982a265350c923acd8101",
+    "retrieved_via": "https://hf-mirror.com (huggingface.co is unreachable from this project)"
+  },
+  "tokenizer_class": "Qwen2Tokenizer",
+  "model_max_length": 131072,
+  "template": {
+    "path": "envs/qwen3-8b-chat-template.jinja",
+    "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8",
+    "characters": 4168,
+    "line_endings": "LF"
+  },
+  "markers_present": {
+    "{%- if tools %}": true,
+    "<tool_call>": true,
+    "</tool_call>": true,
+    "<tool_response>": true,
+    "</tool_response>": true,
+    "enable_thinking": true,
+    "<|im_start|>": true,
+    "<|im_end|>": true
+  },
+  "non_thinking_contract": "The template emits '<think>\\n\\n</think>\\n\\n' when `enable_thinking` is defined and false. That empty block is what 'non-thinking mode' means for this project, and both SFT rendering and RL rollout must pass the same flag or the token streams differ."
+}

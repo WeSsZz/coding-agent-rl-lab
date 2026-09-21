@@ -1,0 +1,56 @@
+# Pinned GPU environment for route v2 (phase 3)
+#
+# Source of truth: `pyproject.toml` of verl-project/verl at tag v0.9.1
+#   commit 1876b06d0a3e4e71e06230be10af14492ca8a75b
+#   file sha256 3c107d544c23314389bdcb7a1bf5cde8787ec4dc2fc35f54113faa8f62484ecf
+#   fetched via raw.githubusercontent.com from the Ubuntu worker
+# A local copy is at work/private/verl-v0.9.1-pyproject.toml (gitignored).
+#
+# Everything below is quoted from that file; nothing here is this project's preference.
+# Where veRL leaves a dependency unpinned, this project pins it, and says so.
+
+## Framework
+
+verl                1876b06d0a3e4e71e06230be10af14492ca8a75b   # tag v0.9.1
+python              >=3.10,<3.13                                # veRL's own requires-python
+
+## The vLLM extra (this project trains with vLLM rollout)
+
+torch               2.11.0                                      # cu130 wheels
+torchvision         0.26.0
+torchaudio          2.11.0
+vllm                0.24.0
+transformers        5.9.0                                       # project-wide pin in veRL; vllm 0.24 needs >=5.5.3
+flash-attn          2.8.3                                       # extra `flash-attn-cu130torch211`
+ray[default]        >=2.41.0
+torchdata           (unpinned upstream)
+tensordict          >=0.8.0,<=0.10.0,!=0.9.0
+torchcodec          (unpinned upstream; ABI-coupled to torch)
+cupy-cuda13x        14.0.1                                      # extra `cupy-cu130`, needed by ray NCCL collectives
+
+## Pinned by this project because veRL leaves them open
+
+peft                ==0.17.1                                    # see note below
+accelerate          ==1.4.0                                     # trl 1.12 lower bound; keep the pair consistent
+
+# The SFT half of the pipeline does not have to live in this environment, but if it does,
+# trl==0.27.0 is what veRL v0.9.1's own pyproject carries. Route v1 used trl==1.12.0, which is a
+# different major line; the two must not be mixed in one interpreter.
+
+## Notes that matter more than the versions
+
+1. veRL v0.9.1 manages several virtual environments from a single pyproject using `uv` "conflicts
+   forks", so different backends can hold different torch builds. Install through veRL's own
+   mechanism (`uv sync --extra fsdp --extra vllm`) rather than by hand, or the forks are lost.
+
+2. The stack is **cu130**. That is a hard prerequisite on the rental box: the NVIDIA driver must
+   support CUDA 13. If it does not, the options are to update the driver or to move off this
+   veRL tag, and that decision must be made *after* reading `nvidia-smi`, not before.
+
+3. Route v1's environment is not reproducible and must not be reused as a base: its
+   `pyproject.toml` declared no dependencies at all, torch and peft came from the base image via
+   `--system-site-packages`, and a `peft` 0.21.0 overlay at `/root/autodl-tmp` was required but
+   never recorded. This file exists so that failure is not repeated.
+
+4. `scripts/grpo_sitecustomize.py` in route v1 hides the `vllm` package from the training
+   interpreter. That shim must **not** be installed into this environment: route v2 requires vLLM.

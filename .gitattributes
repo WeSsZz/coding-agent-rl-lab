@@ -1,0 +1,19 @@
+# Line endings are part of the contract in this repository, not a local preference.
+#
+# `core.autocrlf=true` is set on the Windows editing machine, which would rewrite LF as CRLF on
+# checkout. That breaks any file whose sha256 is recorded in a manifest: the hash would match on
+# the Linux worker and not on Windows, and a pinned chat template that differs by a byte is a
+# different prompt. Enforcing LF everywhere makes the two machines agree.
+* text=auto eol=lf
+
+# The pinned artifacts are the ones where a stray carriage return is a correctness bug rather
+# than a cosmetic one, so they are called out explicitly.
+envs/*.jinja text eol=lf
+envs/*.json text eol=lf
+envs/*.pins.txt text eol=lf
+manifests/*.json text eol=lf
+
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.ps1 text eol=crlf

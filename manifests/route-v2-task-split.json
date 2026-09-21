@@ -71,7 +71,8 @@
       "pass_to_pass_over_cap": 25,
       "fail_to_pass_over_cap": 4
     },
-    "pool_instances_after_cost_filter": 63
+    "images_unavailable_dropped": 0,
+    "pool_instances_after_filters": 63
   },
   "instances": [
     {

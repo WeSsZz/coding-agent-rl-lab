@@ -110,6 +110,35 @@ def apply_cost_filter(
     return kept, dropped
 
 
+def apply_image_availability_filter(
+    rows: list[dict[str, Any]], unavailable_images: set[str]
+) -> tuple[list[dict[str, Any]], int]:
+    """Drop instances whose published image does not exist.
+
+    The official SWE-Gym data includes rows whose instance image was never published. Leaving
+    one in a split is not a cosmetic problem: the container start fails, and that lands in the
+    results as an infrastructure failure, which this project is careful never to score as a
+    policy failure. Availability is produced by `scripts/vm/check_images_exist.sh`, which asks
+    the registry directly rather than pulling.
+    """
+
+    if not unavailable_images:
+        return rows, 0
+    kept = [row for row in rows if image_name(row) not in unavailable_images]
+    removed = len(rows) - len(kept)
+    if not kept:
+        raise SplitError("the image availability filter removed every instance")
+    return kept, removed
+
+
+def image_name(row: dict[str, Any]) -> str:
+    return (
+        "xingyaoww/sweb.eval.x86_64."
+        + row["instance_id"].replace("__", "_s_").lower()
+        + ":latest"
+    )
+
+
 def near_duplicate_groups(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
     """Map an instance id to a group id that must land in a single split."""
 
@@ -273,9 +302,7 @@ def build_manifest(
                     ),
                     "selection_key": selection_key(instance_id, salt)[:16],
                     "route_v1_note": ROUTE_V1_TOUCHED.get(instance_id),
-                    "image": "xingyaoww/sweb.eval.x86_64."
-                    + instance_id.replace("__", "_s_").lower()
-                    + ":latest",
+                    "image": image_name(row),
                 }
             )
 
@@ -416,6 +443,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=8,
         help="drop instances whose fix must turn on an implausibly large number of tests",
     )
+    parser.add_argument(
+        "--exclude-images",
+        dest="exclude_images",
+        type=Path,
+        help=(
+            "a file of image names known not to exist upstream (one per line), as produced by "
+            "scripts/vm/check_images_exist.sh; every instance using one is dropped"
+        ),
+    )
     return parser
 
 
@@ -452,9 +488,18 @@ def main(argv: list[str] | None = None) -> int:
         max_pass_to_pass=arguments.max_pass_to_pass,
         max_fail_to_pass=arguments.max_fail_to_pass,
     )
+    unavailable: set[str] = set()
+    if arguments.exclude_images:
+        unavailable = {
+            line.strip()
+            for line in arguments.exclude_images.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        }
+    rows, image_dropped = apply_image_availability_filter(rows, unavailable)
     allocations, stats = assign(rows, sizes, salt=arguments.salt)
     stats["cost_filter_dropped"] = cost_dropped
-    stats["pool_instances_after_cost_filter"] = len(rows)
+    stats["images_unavailable_dropped"] = image_dropped
+    stats["pool_instances_after_filters"] = len(rows)
     problems = validate(allocations, rows, sizes=sizes)
     if problems:
         for problem in problems:

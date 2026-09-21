@@ -9,9 +9,10 @@ import, copies it into an isolated /tmp directory on the VM, runs the unittest s
 and optionally runs the guarded real-Docker smoke test. Both the local bundle and the remote
 copies are removed afterwards, so a failed run does not leave state behind.
 
-The bundle must contain scripts, datasets, fixtures and manifests as well as src and tests: tests
-import `scripts.*`, read the fixtures, and read the committed manifests, and their absence shows up
-as import errors or assertion failures rather than as an obvious packaging error.
+The bundle must contain scripts, datasets, fixtures, manifests and envs as well as src and tests:
+tests import `scripts.*`, read the fixtures, and read the committed manifests and pinned
+environments, and their absence shows up as import errors or assertion failures rather than as
+an obvious packaging error.
 
 .PARAMETER DockerIntegration
 Also run tests.test_docker_integration against the cached SWE-Gym base image.
@@ -70,7 +71,7 @@ if (-not (Test-Path -LiteralPath $IdentityFile)) {
 }
 
 $repository = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
-$bundlePaths = @("src", "tests", "scripts", "datasets", "fixtures", "manifests", "pyproject.toml")
+$bundlePaths = @("src", "tests", "scripts", "datasets", "fixtures", "manifests", "envs", "pyproject.toml")
 foreach ($relative in $bundlePaths) {
     if (-not (Test-Path -LiteralPath (Join-Path $repository $relative))) {
         throw "required bundle path is missing: $relative"

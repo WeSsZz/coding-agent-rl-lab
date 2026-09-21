@@ -163,6 +163,67 @@ class EnvironmentTests(unittest.TestCase):
             self.assertIn("requires reading the target file first", unread.observation)
             self.assertIn("requires reading the target file first", stale.observation)
 
+    def test_replace_lines_outside_the_read_range_is_refused(self) -> None:
+        """Reading a file is not the same as reading the lines being rewritten."""
+
+        with LocalFixtureEnvironment(self.root) as environment:
+            environment.reset(self.task)
+            environment.step(
+                AgentAction(
+                    ActionKind.READ_FILE,
+                    {"path": "calculator.py", "start_line": 2, "end_line": 21},
+                )
+            )
+            outside = environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_LINES,
+                    {"path": "calculator.py", "start_line": 1, "end_line": 1, "new": "pass"},
+                )
+            )
+
+            self.assertIn("outside every range you have read", outside.observation)
+            self.assertIn("You have read lines 2-4", outside.observation)
+            self.assertEqual(environment.changed_files(), ())
+
+    def test_reading_a_different_range_of_the_same_file_is_allowed(self) -> None:
+        """Only a repeat of the identical read is unproductive; another window is new information."""
+
+        with LocalFixtureEnvironment(self.root) as environment:
+            environment.reset(self.task)
+            first = environment.step(
+                AgentAction(
+                    ActionKind.READ_FILE,
+                    {"path": "calculator.py", "start_line": 1, "end_line": 20},
+                )
+            )
+            second = environment.step(
+                AgentAction(
+                    ActionKind.READ_FILE,
+                    {"path": "calculator.py", "start_line": 2, "end_line": 21},
+                )
+            )
+
+            self.assertTrue(first.observation.startswith("1: "))
+            self.assertTrue(second.observation.startswith("2: "), second.observation[:120])
+
+    def test_a_failed_read_does_not_count_as_having_read_the_file(self) -> None:
+        """A `FileNotFoundError` must not be remembered as content the policy received."""
+
+        with LocalFixtureEnvironment(self.root) as environment:
+            environment.reset(self.task)
+            missing = AgentAction(ActionKind.READ_FILE, {"path": "no_such_file.py"})
+            first = environment.step(missing)
+            environment.step(AgentAction(ActionKind.READ_FILE, {"path": "calculator.py"}))
+            retried = environment.step(missing)
+
+            self.assertIn("Tool error", first.observation)
+            self.assertNotIn(
+                "do not reread an unchanged file",
+                retried.observation,
+                "a retry after a failed read is not a reread of content the policy never got",
+            )
+            self.assertIn("Tool error", retried.observation)
+
     def test_finish_without_an_edit_is_refused_while_the_verifier_fails(self) -> None:
         with LocalFixtureEnvironment(self.root) as environment:
             environment.reset(self.task)

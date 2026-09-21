@@ -38,22 +38,20 @@ from typing import Any
 
 RAW_SOURCE_URL = "https://raw.githubusercontent.com/getmoto/moto/{commit}/{path}"
 
-HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@")
 
 FILE_LIST_HEADER = (
     "[diagnostic auxiliary input - oracle-file condition]\n"
-    "This message was not produced by a tool call: the environment did not read or search "
-    "anything for you. It is a diagnostic assist, so treat it as a hint whose source you still "
-    "have to verify with your own tools.\n"
-    "The reviewed repair for this issue is known to touch these implementation files:\n"
+    "This block was not produced by a tool call: the environment did not read or search "
+    "anything for you. It is background information supplied by the diagnostic harness.\n"
+    "The reviewed repair for this issue touches these implementation files:\n"
 )
 
 WINDOW_HEADER = (
     "[diagnostic auxiliary input - oracle-context condition]\n"
-    "This message was not produced by a tool call: the environment did not read or search "
-    "anything for you. It is a diagnostic assist, so treat it as a hint whose source you still "
-    "have to verify with your own tools.\n"
-    "The reviewed repair for this issue is known to touch these implementation files:\n"
+    "This block was not produced by a tool call: the environment did not read or search "
+    "anything for you. It is background information supplied by the diagnostic harness.\n"
+    "The reviewed repair for this issue touches these implementation files:\n"
 )
 
 
@@ -79,7 +77,14 @@ def gold_paths(patch: str) -> list[str]:
 
 
 def patch_hunks(patch: str) -> dict[str, list[tuple[int, int]]]:
-    """New-side ``(start, count)`` of every hunk, grouped by implementation file."""
+    """``(start, count)`` of every hunk on the **old** side, grouped by implementation file.
+
+    The window renders the file as it exists *before* the repair, so it must be anchored on the old
+    side (`-a,b`). The new side (`+c,d`) belongs to a file that does not exist yet in the container:
+    where a repair inserts lines earlier in the same file the two sides disagree, and
+    `getmoto__moto-7365`'s third hunk is old 385-396 against new 390-396 - a window built from the
+    new side with no padding would miss five lines of the region it is meant to show.
+    """
 
     hunks: dict[str, list[tuple[int, int]]] = {}
     current: str | None = None
@@ -155,7 +160,7 @@ def render_window(
             skipped = first - previous - 1
             rendered.append(
                 f"[lines {previous + 1}-{first - 1} not shown: the repair does not touch them "
-                f"({skipped} lines); read them with read_file if you need them]"
+                f"({skipped} lines)]"
             )
         rendered.extend(f"{number}: {lines[number - 1]}" for number in range(first, last + 1))
     return "\n".join(rendered), {
@@ -211,10 +216,7 @@ def added_line_overlap(
 
 
 def file_list_block(paths: list[str]) -> str:
-    return FILE_LIST_HEADER + "".join(f"  {path}\n" for path in paths) + (
-        "Read them yourself before editing, and decide the change from the code and the failure "
-        "output rather than assuming one particular edit."
-    )
+    return FILE_LIST_HEADER + "".join(f"  {path}\n" for path in paths)
 
 
 def window_block(paths: list[str], entries: list[dict[str, Any]]) -> str:
@@ -231,7 +233,7 @@ def window_block(paths: list[str], entries: list[dict[str, Any]]) -> str:
         "Below is the real base-commit source of those files at the lines the failure is about, "
         "with the file's own absolute line numbers. It is the pre-fix code as it exists in the "
         "task snapshot; it is not a diff, it does not contain the fix, and the fix is not "
-        "described. Verify anything you rely on with your own tools.\n"
+        "described.\n"
     )
     for entry in entries:
         spans = ", ".join(
@@ -305,7 +307,11 @@ def main(argv: list[str] | None = None) -> int:
             "raw_source_url": RAW_SOURCE_URL,
         },
         "window_rule": {
-            "anchor": "union of the repair's new-side hunk ranges in each file",
+            "hunk_side": (
+                "old: the window renders the file as it exists before the repair, so it is anchored "
+                "on each hunk's `-a,b` coordinates, never the `+c,d` ones"
+            ),
+            "anchor": "one interval per repair hunk, merged when they overlap",
             "pad_lines": args.pad,
             "max_lines_per_file": args.max_lines_per_file,
             "max_total_lines": args.max_total_lines,
@@ -369,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
                     "source_sha256": _sha256_text(body),
                     "total_lines": len(lines),
                     **geometry,
-                    "hunks": [{"new_start": start, "new_count": count} for start, count in spans],
+                    "hunks": [{"old_start": start, "old_count": count} for start, count in spans],
                     "covers_every_hunk": True,
                     "rendered": rendered,
                     "window_sha256": _sha256_text(rendered),
@@ -430,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
         uncovered = [
-            {"path": path, "new_start": start, "new_end": start + count - 1}
+            {"path": path, "old_start": start, "old_end": start + count - 1}
             for path, spans in hunks.items()
             for start, count in spans
             if not any(

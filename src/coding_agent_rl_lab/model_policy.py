@@ -90,8 +90,16 @@ def build_action_messages(
     *,
     max_observation_chars: int = 8000,
     max_history_chars: int = 8000,
+    auxiliary_input: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, str], ...]:
-    """Build the exact versioned action prompt used for rollout and supervised data."""
+    """Build the exact versioned action prompt used for rollout and supervised data.
+
+    `auxiliary_input` is the hook for an A/B/C-style diagnostic: it is a labelled field inside the
+    task payload, so it reads as part of the fixed background rather than as the last thing said
+    before the model answers. Appending it as a trailing message instead made every single step end
+    on an instruction, which is a different experiment from "this information is available". The
+    default of `None` changes nothing for every existing caller.
+    """
 
     if max_observation_chars <= 0 or max_history_chars <= 0:
         raise ValueError("observation and history limits must be positive")
@@ -115,7 +123,7 @@ def build_action_messages(
             }
         )
     history_payload = list(reversed(history_payload_reversed))
-    user_payload = {
+    user_payload: dict[str, Any] = {
         "task_id": task.task_id,
         "issue": task.issue,
         "base_commit": task.base_commit,
@@ -123,9 +131,13 @@ def build_action_messages(
         "step": len(history) + 1,
         "max_steps": task.max_steps,
         "baseline": "verifier tests fail before the agent patch",
-        "initial_observation": initial_observation[-max_observation_chars:],
-        "history": history_payload,
     }
+    # Background information belongs with the other task metadata, not after the history: a field
+    # that arrives last reads as the newest instruction rather than as a standing fact.
+    if auxiliary_input is not None:
+        user_payload["diagnostic_auxiliary_input"] = dict(auxiliary_input)
+    user_payload["initial_observation"] = initial_observation[-max_observation_chars:]
+    user_payload["history"] = history_payload
     return (
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
@@ -512,7 +524,7 @@ Rules:
 - Search results rank implementation files ahead of tests and documentation, cap matches per file, and stop at 100 matches. If a query has no exact hit, it is retried once with the longest token in it, labelled `Longest token in the query: <token>`; use that evidence instead of repeating the phrase. After reading a test, search for implementation-facing class, method, field, or error names from its calls and assertions; do not search for the test name or test decorators.
 - Search output uses PATH_MATCH:<path> for filename matches, SUGGESTED_PATH:<path> for close paths, and <path>:<line>:<text> only for content matches. Never treat a PATH_MATCH or SUGGESTED_PATH as a line number.
 - When the exact query matches only tests or documentation, the result adds two hints. `Shorter query "<segment>" matches implementation files:` is followed by that segment's real implementation matches, which is how a request path such as `/moto-api/config` reaches the module that registers or answers the path. IMPLEMENTATION_CANDIDATE:<path> lines then name the modules the matching test imports; those are the test's dependencies rather than proof that the failing behavior lives there, so read a related-query match before a candidate.
-- read_file returns numbered lines as `<line number>: <text>`. Copy those numbers exactly into replace_lines start_line/end_line; never re-count lines yourself.
+- read_file returns numbered lines as `<line number>: <text>`. Copy those numbers exactly into replace_lines start_line/end_line; never re-count lines yourself. `replace_lines` may only rewrite lines a read_file has already shown you, because the indentation of the surrounding block is what makes the replacement parse; an edit aimed at a range you have not read is refused as a guess, not recorded as a wrong edit.
 - read_file shows at most 200 lines and 8000 characters. A truncated or ranged read ends with `[read_file lines A-B: ...]`; continue from the start_line it names instead of guessing.
 - For a large implementation file, use ranged read_file only around a content-match line. For a path-only result, read the file without a range or search for an exact identifier inside it.
 - If there are no exact matches, inspect a relevant SUGGESTED_PATH or search for an exact identifier from the verifier failure; do not repeat or guess the obsolete path.

@@ -57,6 +57,14 @@ class FakeDockerRunner:
             return CommandExecution(0, stdout="src/bug.py:7:needle\n")
         if "replace_text requires exactly one match" in " ".join(argv):
             return CommandExecution(0)
+        if argv[:2] == ("docker", "exec") and argv[2] != "-i" and argv[5:7] == ("python", "-c"):
+            # A `read_file`: the container script prints numbered lines, and the environment records
+            # the span it actually showed. A fake that returned nothing would make every read look
+            # like a file the policy had never seen.
+            numbers = [int(value) for value in argv[9:] if value.isdigit()]
+            first, last = (numbers[0], numbers[1]) if len(numbers) == 2 else (1, 20)
+            body = "\n".join(f"{number}: line {number}" for number in range(first, last + 1))
+            return CommandExecution(0, stdout=body + "\n")
         return CommandExecution(0)
 
 
@@ -238,6 +246,47 @@ class DockerEnvironmentTests(unittest.TestCase):
             self.assertIn("requires reading the target file first", unread.observation)
             self.assertEqual(replaced.observation, "Updated src/bug.py.")
             self.assertEqual(environment.changed_files(), ("src/bug.py",))
+        finally:
+            environment.close()
+
+    def test_replace_lines_outside_every_read_range_is_refused(self) -> None:
+        """A file read is not a line-range read: the policy may only rewrite lines it was shown."""
+
+        runner = FakeDockerRunner(self.base_commit)
+        environment = DockerSandboxEnvironment(self.spec, DockerSandboxConfig(), runner)
+        try:
+            environment.reset(self.task)
+            environment.step(
+                AgentAction(
+                    ActionKind.READ_FILE,
+                    {"path": "src/bug.py", "start_line": 1, "end_line": 20},
+                )
+            )
+            outside = environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_LINES,
+                    {"path": "src/bug.py", "start_line": 40, "end_line": 41, "new": "pass"},
+                )
+            )
+            self.assertIn("outside every range you have read", outside.observation)
+            self.assertIn("You have read lines 1-20", outside.observation)
+            self.assertNotIn("src/bug.py", environment.changed_files())
+
+            # The same file's other range is a different action, so it is never the loop guard that
+            # refuses it; and once the range is read, the edit is accepted.
+            environment.step(
+                AgentAction(
+                    ActionKind.READ_FILE,
+                    {"path": "src/bug.py", "start_line": 21, "end_line": 40},
+                )
+            )
+            inside = environment.step(
+                AgentAction(
+                    ActionKind.REPLACE_LINES,
+                    {"path": "src/bug.py", "start_line": 30, "end_line": 30, "new": "pass"},
+                )
+            )
+            self.assertEqual(inside.observation, "Updated src/bug.py.")
         finally:
             environment.close()
 

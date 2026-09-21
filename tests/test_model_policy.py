@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import unittest
@@ -88,7 +88,7 @@ class OpenAICompatiblePolicyTests(unittest.TestCase):
         self.assertNotIn("PRIVATE-TEST-PATCH", recorded_prompt)
         self.assertNotIn("secret-token", json.dumps(policy.manifest.metadata))
         self.assertIn("test_decimal", recorded_prompt)
-        self.assertEqual(policy.manifest.metadata["prompt_version"], "coding-tools-json-v24")
+        self.assertEqual(policy.manifest.metadata["prompt_version"], "coding-tools-json-v25")
         self.assertIn(
             "reserve at least a third of the remaining steps",
             decision.input_messages[0]["content"],

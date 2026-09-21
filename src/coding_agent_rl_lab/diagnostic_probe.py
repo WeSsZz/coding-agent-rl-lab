@@ -43,6 +43,7 @@ from .model_policy import (
     PROMPT_VERSION,
     OpenAICompatiblePolicy,
     OpenAICompatiblePolicyConfig,
+    build_action_messages,
 )
 from .providers import DockerSandboxProvider
 from .rollout import RolloutCollector, build_report, read_trajectories, write_trajectories
@@ -130,12 +131,14 @@ def load_oracle_spec(path: Path) -> dict[tuple[str, str], OracleRecord]:
 
 
 class AuxiliaryContextPolicy(OpenAICompatiblePolicy):
-    """The stock policy with one extra, separately identified user message.
+    """The stock policy with one labelled background field added to the task payload.
 
-    The message is appended on every step, because the stock message builder rebuilds the prompt
-    from the task, the history and the initial observation; keeping it constant is what makes the
-    condition constant. Its sha256 and character count ride in the policy manifest, so a trajectory
-    cannot be mistaken for one collected under another condition.
+    The field is `diagnostic_auxiliary_input` inside the same user payload the task already uses, so
+    it is present, identical and *not last* on every step. The earlier version appended a separate
+    user message, which meant every step ended on the assist and its imperative wording - a confound
+    between "this information is available" and "you were just told what to do". Its sha256 and
+    character count ride in the policy manifest, so a trajectory cannot be mistaken for one
+    collected under another condition.
     """
 
     def __init__(
@@ -162,6 +165,7 @@ class AuxiliaryContextPolicy(OpenAICompatiblePolicy):
                     auxiliary_message.encode("utf-8")
                 ).hexdigest(),
                 "auxiliary_chars": len(auxiliary_message),
+                "auxiliary_placement": "task_payload_field",
             },
         )
 
@@ -171,10 +175,26 @@ class AuxiliaryContextPolicy(OpenAICompatiblePolicy):
         history: Sequence[Any],
         initial_observation: str,
     ) -> tuple[dict[str, str], ...]:
-        messages = super()._messages(task, history, initial_observation)
-        if not self.auxiliary_message:
-            return messages
-        return (*messages, {"role": "user", "content": self.auxiliary_message})
+        return build_action_messages(
+            task,
+            history,
+            initial_observation,
+            max_observation_chars=self.config.max_observation_chars,
+            max_history_chars=self.config.max_history_chars,
+            auxiliary_input=(
+                None
+                if not self.auxiliary_message
+                else {
+                    "label": f"oracle assist, condition {self.condition_id}",
+                    "provenance": (
+                        "supplied by the diagnostic harness, not produced by any tool call; the "
+                        "environment did not read or search anything for you"
+                    ),
+                    "sha256": hashlib.sha256(self.auxiliary_message.encode("utf-8")).hexdigest(),
+                    "text": self.auxiliary_message,
+                }
+            ),
+        )
 
 
 @contextlib.contextmanager

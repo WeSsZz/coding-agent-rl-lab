@@ -150,6 +150,35 @@ def render_numbered_window(
     return "\n".join((*rendered, f"[read_file lines {first}-{shown_last}: {'; '.join(notes)}]"))
 
 
+def shown_line_span(rendered: str) -> tuple[int, int] | None:
+    """The lines a `read_file` observation actually put in front of the policy.
+
+    The policy can only reason about line numbers it has seen, so this - not the requested range -
+    is what an edit range has to be checked against. A read clipped by the character budget shows
+    less than it asked for, and the footer says so; trusting the request instead of the output is
+    how a policy ends up rewriting lines it never saw.
+    """
+
+    numbers = [int(match) for match in re.findall(r"^(\d+): ", rendered, re.MULTILINE)]
+    if not numbers:
+        return None
+    return min(numbers), max(numbers)
+
+
+def describe_spans(spans: Sequence[tuple[int, int]]) -> str:
+    return ", ".join(f"{first}-{last}" for first, last in sorted(spans))
+
+
+def read_range_requirement_message(relative: str, start: int, end: int, spans: Sequence[tuple[int, int]]) -> str:
+    return (
+        f"replace_lines {start}-{end} is outside every range you have read of {relative}. "
+        f"You have read lines {describe_spans(spans)}. Read the lines you want to change first "
+        f"(read_file start_line={max(1, start - 20)} end_line={end + 20}), then edit them: an edit "
+        "whose indentation you have not seen is a guess, and guessing here is recorded as a failed "
+        "edit rather than a wrong one."
+    )
+
+
 def search_location_rank(parts: Sequence[str]) -> int:
     """Rank implementation files ahead of tests and prose; lower is better."""
 
@@ -573,14 +602,8 @@ def _bounded_search_lines(lines: Sequence[str], *, max_chars: int) -> list[str]:
     return rendered
 
 
-def replace_line_range(
-    content: str,
-    *,
-    start_line: int,
-    end_line: int,
-    new: str,
-) -> str:
-    """Replace a small inclusive one-based line range while preserving its final newline."""
+def replace_line_range_bounds(start_line: Any, end_line: Any) -> tuple[int, int]:
+    """Validate a `replace_lines` range on its own, so it can be checked before the file is read."""
 
     if isinstance(start_line, bool) or isinstance(end_line, bool):
         raise ToolError("replace_lines line ranges must be integers")
@@ -590,6 +613,19 @@ def replace_line_range(
         raise ToolError("replace_lines requires 1 <= start_line <= end_line")
     if end_line - start_line + 1 > 80:
         raise ToolError("replace_lines cannot replace more than 80 lines")
+    return start_line, end_line
+
+
+def replace_line_range(
+    content: str,
+    *,
+    start_line: int,
+    end_line: int,
+    new: str,
+) -> str:
+    """Replace a small inclusive one-based line range while preserving its final newline."""
+
+    start_line, end_line = replace_line_range_bounds(start_line, end_line)
     if not isinstance(new, str):
         raise ToolError("new must be a string")
 
@@ -1020,10 +1056,15 @@ class ActionLoopGuard:
         ):
             return "do not repeat list_files"
         if action.kind is ActionKind.READ_FILE:
+            # Only a read that *returned content* makes a repeat pointless. Counting a failed read
+            # here told the policy it already had a file it never received: one `FileNotFoundError`
+            # made that exact action permanently refusable, answered with "do not reread an
+            # unchanged file" - a statement about content the policy never got. The retry after a
+            # failure is still bounded by the branch above, which refuses an immediate repeat.
             previous_reads = [
                 index
-                for index, (previous, _) in enumerate(self._records)
-                if previous == action
+                for index, (previous, observation) in enumerate(self._records)
+                if previous == action and not observation.startswith("Tool error:")
             ]
             if previous_reads:
                 path = action.arguments.get("path")
@@ -1129,7 +1170,7 @@ class LocalFixtureEnvironment:
         self.tool_calls = 0
         self.violations: list[str] = []
         self._initial_hashes: dict[str, str] = {}
-        self._read_files: set[str] = set()
+        self._read_spans: dict[str, list[tuple[int, int]]] = {}
         self._edited_since_verification = False
         self._action_loop_guard = ActionLoopGuard()
 
@@ -1149,7 +1190,7 @@ class LocalFixtureEnvironment:
         self.tool_calls = 0
         self.violations = []
         self._action_loop_guard.reset()
-        self._read_files = set()
+        self._read_spans = {}
         self._initial_hashes = self._file_hashes()
         self.baseline_result = self.verifier.run(self.repository, task.test_command)
         self.last_test_result = self.baseline_result
@@ -1186,11 +1227,12 @@ class LocalFixtureEnvironment:
             elif action.kind is ActionKind.READ_FILE:
                 path = self._resolve_repository_path(action.arguments.get("path"))
                 content = path.read_text(encoding="utf-8")
-                self._read_files.add(path.relative_to(repository).as_posix())
-                result = StepResult(
-                    render_numbered_window(content, read_line_range(action.arguments)),
-                    False,
-                )
+                relative = path.relative_to(repository).as_posix()
+                rendered = render_numbered_window(content, read_line_range(action.arguments))
+                span = shown_line_span(rendered)
+                if span is not None:
+                    self._read_spans.setdefault(relative, []).append(span)
+                result = StepResult(rendered, False)
             elif action.kind is ActionKind.REPLACE_TEXT:
                 path = self._resolve_repository_path(action.arguments.get("path"))
                 relative = path.relative_to(repository).as_posix()
@@ -1217,14 +1259,22 @@ class LocalFixtureEnvironment:
                 if unparseable is not None:
                     raise ToolError(unparseable)
                 path.write_text(updated, encoding="utf-8")
-                self._read_files.discard(relative)
+                self._read_spans.pop(relative, None)
                 self._edited_since_verification = True
                 result = StepResult(f"Updated {relative}.", False)
             elif action.kind is ActionKind.REPLACE_LINES:
                 path = self._resolve_repository_path(action.arguments.get("path"))
                 relative = path.relative_to(repository).as_posix()
-                if relative not in self._read_files:
+                spans = self._read_spans.get(relative)
+                if not spans:
                     raise ToolError("replace_lines requires reading the target file first")
+                start_line, end_line = replace_line_range_bounds(
+                    action.arguments.get("start_line"), action.arguments.get("end_line")
+                )
+                if not any(first <= start_line and end_line <= last for first, last in spans):
+                    raise ToolError(
+                        read_range_requirement_message(relative, start_line, end_line, spans)
+                    )
                 new = self._required_string(action.arguments, "new", allow_empty=True)
                 content = path.read_text(encoding="utf-8")
                 updated = replace_line_range(
@@ -1251,7 +1301,7 @@ class LocalFixtureEnvironment:
                 if unparseable is not None:
                     raise ToolError(unparseable)
                 path.write_text(updated, encoding="utf-8")
-                self._read_files.discard(relative)
+                self._read_spans.pop(relative, None)
                 self._edited_since_verification = True
                 result = StepResult(f"Updated {relative}.", False)
             elif action.kind is ActionKind.RUN_TESTS:
@@ -1346,7 +1396,7 @@ class LocalFixtureEnvironment:
         self.baseline_result = None
         self.last_test_result = None
         self._initial_hashes = {}
-        self._read_files = set()
+        self._read_spans = {}
         self._edited_since_verification = False
         self._action_loop_guard.reset()
 

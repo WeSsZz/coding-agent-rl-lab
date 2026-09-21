@@ -206,26 +206,26 @@ class BuildDiagnosticOracleTests(unittest.TestCase):
         covered = set()
         for interval in window["intervals"]:
             covered |= set(range(interval["first_line"], interval["last_line"] + 1))
-        self.assertIn(4, covered, "the first hunk must be shown")
-        self.assertIn(41, covered, "the second hunk must be shown even though it is far away")
-        self.assertTrue(window["hunks"][0]["new_start"] == 1)
+        self.assertIn(3, covered, "the first hunk must be shown")
+        self.assertIn(40, covered, "the second hunk must be shown even though it is far away")
+        self.assertEqual(window["hunks"], [{"old_start": 1, "old_count": 3}, {"old_start": 40, "old_count": 3}])
         self.assertEqual(manifest["tasks"][0]["hunks_not_covered"], [])
         self.assertLess(window["padding"], 20)
         self.assertFalse(window["truncated"])
         self.assertEqual(window["padding"], 14)
-        self.assertEqual(window["shown_lines"], 49)
+        self.assertEqual(window["shown_lines"], 48)
         self.assertEqual(
-            [(i["first_line"], i["last_line"]) for i in window["intervals"]], [(1, 18), (27, 57)]
+            [(i["first_line"], i["last_line"]) for i in window["intervals"]], [(1, 17), (26, 56)]
         )
 
     def test_a_hunk_is_kept_even_when_it_exceeds_the_cap(self) -> None:
-        records, manifest, _ = self.build(pad=20, max_lines_per_file=6)
+        records, manifest, _ = self.build(pad=20, max_lines_per_file=4)
         window = self.window(records, "mod.py")
         intervals = [(i["first_line"], i["last_line"]) for i in window["intervals"]]
-        self.assertEqual(intervals, [(1, 4), (41, 43)])
+        self.assertEqual(intervals, [(1, 3), (40, 42)])
         self.assertEqual(window["padding"], 0)
         self.assertTrue(window["truncated"], "over-cap files must say so")
-        self.assertEqual(window["shown_lines"], 7)
+        self.assertEqual(window["shown_lines"], 6)
         self.assertEqual(manifest["tasks"][0]["hunks_not_covered"], [])
 
     def test_no_added_line_is_shown_and_undisclosed_overlap_is_reported(self) -> None:
@@ -246,7 +246,7 @@ class BuildDiagnosticOracleTests(unittest.TestCase):
         self.assertEqual(self.by_condition(records, "C")["added_line_disclosure"], disclosure)
 
     def test_total_line_budget_skips_the_rest_and_records_it(self) -> None:
-        _, manifest, _ = self.build(max_total_lines=8, max_lines_per_file=30, pad=0)
+        _, manifest, _ = self.build(max_total_lines=7, max_lines_per_file=30, pad=0)
         entry = manifest["tasks"][0]
         self.assertEqual(entry["files_with_windows"], ["pkg/mod.py"])
         self.assertEqual(
@@ -254,7 +254,7 @@ class BuildDiagnosticOracleTests(unittest.TestCase):
         )
         # The skipped file's hunk is reported rather than silently absent.
         self.assertEqual(
-            entry["hunks_not_covered"], [{"path": "pkg/second.py", "new_start": 1, "new_end": 3}]
+            entry["hunks_not_covered"], [{"path": "pkg/second.py", "old_start": 1, "old_end": 2}]
         )
 
     def test_missing_source_is_reported_rather_than_invented(self) -> None:

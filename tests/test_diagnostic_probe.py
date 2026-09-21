@@ -1,4 +1,4 @@
-"""Pin the A/B/C runner's contract: ordering, seeds, and an honest auxiliary message.
+﻿"""Pin the A/B/C runner's contract: ordering, seeds, and an honest auxiliary message.
 
 The load-bearing properties are that the three conditions differ *only* by one extra user message,
 that the message is never dressed up as a tool result, and that a trajectory records which
@@ -161,7 +161,7 @@ class AuxiliaryContextPolicyTests(unittest.TestCase):
         history = [_step(1, 10, 2)]
         self.assertEqual(policy._messages(task, history, "baseline"), stock._messages(task, history, "baseline"))
 
-    def test_adds_exactly_one_extra_user_message_and_keeps_the_stock_messages(self) -> None:
+    def test_the_assist_is_a_labelled_field_inside_the_task_payload(self) -> None:
         stock = OpenAICompatiblePolicy(_config())
         policy = AuxiliaryContextPolicy(
             _config(), condition_id="C", auxiliary_message="the window"
@@ -170,19 +170,39 @@ class AuxiliaryContextPolicyTests(unittest.TestCase):
         history = [_step(1, 10, 2)]
         baseline = stock._messages(task, history, "baseline")
         messages = policy._messages(task, history, "baseline")
-        self.assertEqual(messages[:-1], baseline)
-        self.assertEqual(len(messages), len(baseline) + 1)
-        self.assertEqual(messages[-1], {"role": "user", "content": "the window"})
 
-    def test_the_auxiliary_message_never_claims_to_be_a_tool_result(self) -> None:
+        # Same shape as the stock prompt: nothing is appended after the task payload.
+        self.assertEqual([message["role"] for message in messages], ["system", "user"])
+        self.assertEqual([message["role"] for message in baseline], ["system", "user"])
+        self.assertEqual(messages[0], baseline[0])
+
+        payload = json.loads(messages[1]["content"])
+        stock_payload = json.loads(baseline[1]["content"])
+        assist = payload.pop("diagnostic_auxiliary_input")
+        self.assertEqual(payload, stock_payload, "only the assist field may differ")
+        self.assertEqual(assist["text"], "the window")
+        self.assertEqual(assist["sha256"], hashlib.sha256(b"the window").hexdigest())
+        self.assertIn("not produced by any tool call", assist["provenance"])
+        self.assertIn("C", assist["label"])
+
+    def test_the_assist_is_not_the_last_thing_the_model_reads(self) -> None:
+        policy = AuxiliaryContextPolicy(
+            _config(), condition_id="B", auxiliary_message="paths"
+        )
+        payload = json.loads(policy._messages(_task(), [], "baseline")[1]["content"])
+        keys = list(payload)
+        self.assertLess(keys.index("diagnostic_auxiliary_input"), keys.index("history"))
+        self.assertEqual(keys[-1], "history")
+
+    def test_the_auxiliary_text_is_never_a_tool_result_or_a_history_entry(self) -> None:
         policy = AuxiliaryContextPolicy(
             _config(), condition_id="B", auxiliary_message="paths"
         )
         messages = policy._messages(_task(), [], "baseline")
         payload = json.loads(messages[1]["content"])
         self.assertEqual(payload["history"], [])
+        self.assertNotIn("paths", json.dumps(payload["history"]))
         self.assertEqual(messages[0]["role"], "system")
-        self.assertEqual(messages[-1]["role"], "user")
 
     def test_the_manifest_identifies_the_condition_and_the_text(self) -> None:
         policy = AuxiliaryContextPolicy(
@@ -191,6 +211,7 @@ class AuxiliaryContextPolicyTests(unittest.TestCase):
         metadata = policy.manifest.metadata
         self.assertEqual(metadata["diagnostic_condition"], "C")
         self.assertEqual(metadata["auxiliary_chars"], len("window text"))
+        self.assertEqual(metadata["auxiliary_placement"], "task_payload_field")
         self.assertEqual(
             metadata["auxiliary_sha256"], hashlib.sha256(b"window text").hexdigest()
         )
@@ -213,7 +234,7 @@ class TrialRecordTests(unittest.TestCase):
                 version="1",
                 policy_type="openai_compatible_chat_json",
                 model="test-model",
-                metadata={"prompt_version": "coding-tools-json-v24", "diagnostic_condition": "B"},
+                metadata={"prompt_version": "coding-tools-json-v25", "diagnostic_condition": "B"},
             ),
             steps=(
                 _step(1, 100, 20),

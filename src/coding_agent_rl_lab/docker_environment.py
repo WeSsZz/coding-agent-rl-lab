@@ -19,6 +19,9 @@ from .environment import (
     premature_finish_refusal,
     python_edit_syntax_error,
     read_line_range,
+    read_range_requirement_message,
+    replace_line_range_bounds,
+    shown_line_span,
     verifier_output_detail,
 )
 
@@ -717,7 +720,7 @@ for raw in sys.argv[1:]:
         self.violations: list[str] = []
         self._changed_files: set[str] = set()
         self._protected_files: set[str] = set()
-        self._read_files: set[str] = set()
+        self._read_spans: dict[str, list[tuple[int, int]]] = {}
         self._edited_since_verification = False
         self._action_loop_guard = ActionLoopGuard(
             lambda path: path in self._protected_files or is_test_path(path)
@@ -732,7 +735,7 @@ for raw in sys.argv[1:]:
         self.steps = 0
         self.tool_calls = 0
         self.violations = []
-        self._read_files = set()
+        self._read_spans = {}
         self._action_loop_guard.reset()
         try:
             started = self.runner.run(
@@ -810,14 +813,14 @@ for raw in sys.argv[1:]:
                     command = (*command, str(line_range[0]), str(line_range[1]))
                 result = self._exec(command)
                 self._require_command(result, "read_file")
-                self._read_files.add(path)
-                step_result = StepResult(
-                    self._bounded_observation(
-                        result.stdout,
-                        note="read a smaller line range to see the rest of the file",
-                    ),
-                    False,
+                observation = self._bounded_observation(
+                    result.stdout,
+                    note="read a smaller line range to see the rest of the file",
                 )
+                span = shown_line_span(observation)
+                if span is not None:
+                    self._read_spans.setdefault(path, []).append(span)
+                step_result = StepResult(observation, False)
             elif action.kind is ActionKind.REPLACE_TEXT:
                 path = self._safe_relative_path(action.arguments.get("path"))
                 if path in self._protected_files:
@@ -834,28 +837,23 @@ for raw in sys.argv[1:]:
                 result = self._exec(("python", "-c", self._REPLACE_TEXT_SCRIPT, path, old, new))
                 self._require_command(result, "replace_text")
                 self._changed_files.add(path)
-                self._read_files.discard(path)
+                self._read_spans.pop(path, None)
                 self._edited_since_verification = True
                 step_result = StepResult(f"Updated {path}.", False)
             elif action.kind is ActionKind.REPLACE_LINES:
                 path = self._safe_relative_path(action.arguments.get("path"))
                 if path in self._protected_files:
                     raise EnvironmentError(f"cannot modify verifier-owned test file: {path}")
-                if path not in self._read_files:
+                spans = self._read_spans.get(path)
+                if not spans:
                     raise ToolError("replace_lines requires reading the target file first")
-                start_line = action.arguments.get("start_line")
-                end_line = action.arguments.get("end_line")
-                if (
-                    isinstance(start_line, bool)
-                    or isinstance(end_line, bool)
-                    or not isinstance(start_line, int)
-                    or not isinstance(end_line, int)
-                ):
-                    raise ToolError("replace_lines line ranges must be integers")
-                if start_line < 1 or end_line < start_line:
-                    raise ToolError("replace_lines requires 1 <= start_line <= end_line")
-                if end_line - start_line + 1 > 80:
-                    raise ToolError("replace_lines cannot replace more than 80 lines")
+                start_line, end_line = replace_line_range_bounds(
+                    action.arguments.get("start_line"), action.arguments.get("end_line")
+                )
+                if not any(first <= start_line and end_line <= last for first, last in spans):
+                    raise ToolError(
+                        read_range_requirement_message(path, start_line, end_line, spans)
+                    )
                 new = self._required_string(action.arguments, "new", allow_empty=True)
                 result = self._exec(
                     (
@@ -870,7 +868,7 @@ for raw in sys.argv[1:]:
                 )
                 self._require_command(result, "replace_lines")
                 self._changed_files.add(path)
-                self._read_files.discard(path)
+                self._read_spans.pop(path, None)
                 self._edited_since_verification = True
                 step_result = StepResult(f"Updated {path}.", False)
             elif action.kind is ActionKind.RUN_TESTS:
@@ -960,7 +958,7 @@ for raw in sys.argv[1:]:
         self.last_test_result = None
         self._changed_files = set()
         self._protected_files = set()
-        self._read_files = set()
+        self._read_spans = {}
         self._edited_since_verification = False
         self._action_loop_guard.reset()
 

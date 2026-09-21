@@ -27,6 +27,35 @@ from typing import Any, Sequence
 REREAD = "do not reread an unchanged file"
 
 
+def classify_termination(record: dict[str, Any]) -> str:
+    """Why this trial ended without a fix, from the strongest available evidence.
+
+    A pass rate of zero is not a diagnosis: the same zero can come from a missing context, from an
+    edit the policy could not spell, from a wrong idea that compiled, or from a refusal loop that ate
+    the budget. Ordered so the most specific cause wins, and each name says which step to look at:
+
+    * `protocol_error` - the episode failed on the transport/protocol, so it is not a policy result;
+    * `no_edit_attempt` - the policy never tried to change a file;
+    * `recovery_loop` - most of the budget went to refusals and nothing was applied: the policy could
+      not get out of a rejected action;
+    * `edit_construction` - edits were attempted but none applied, and they were refused for the
+      shape of the edit (unparseable, or aimed at lines never read);
+    * `semantic_incomplete` - something was applied and the tests still fail: the idea, not the
+      spelling, is what is left.
+    """
+
+    violations = record["violations"]
+    if any("policy_protocol_error" in value or "policy_transport_error" in value for value in violations):
+        return "protocol_error"
+    if record["edit_attempts"] == 0:
+        return "no_edit_attempt"
+    if not record["applied_edits"] and record["refused_steps"] * 2 >= record["steps"]:
+        return "recovery_loop"
+    if not record["applied_edits"]:
+        return "edit_construction"
+    return "semantic_incomplete"
+
+
 def jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
@@ -166,7 +195,15 @@ def audit(
                 }
             )
     verifier = trajectory.get("verifier") or {}
-    return {
+    edit_attempts = [
+        step
+        for step in steps
+        if step["action"]["kind"] in {"replace_text", "replace_lines"}
+    ]
+    refused_steps = sum(
+        1 for step in steps if (step.get("observation") or "").startswith("Tool error")
+    )
+    record = {
         "task_id": trajectory["task_id"],
         "condition": trajectory["policy"]["metadata"].get("diagnostic_condition"),
         "repetition": trajectory["repetition"],
@@ -175,6 +212,11 @@ def audit(
         "changed_files": list(trajectory["changed_files"]),
         "failed_nodes": [node.split("::")[-1] for node in verifier.get("failed_nodes") or []],
         "pass_to_pass_regressed": verifier.get("pass_to_pass_regressed"),
+        "fail_to_pass_resolved": verifier.get("fail_to_pass_resolved"),
+        "fail_to_pass_total": verifier.get("fail_to_pass_total"),
+        "violations": list(trajectory["reward"].get("violations") or []),
+        "edit_attempts": len(edit_attempts),
+        "refused_steps": refused_steps,
         "edits_in_a_repair_file": sorted(
             {entry["path"] for entry in applied if entry["path"] in gold_paths}
         ),
@@ -185,6 +227,8 @@ def audit(
         "first_unparseable": first_unparseable,
         "applied_edits": applied,
     }
+    record["termination"] = classify_termination(record)
+    return record
 
 
 def gold_paths_by_task(path: Path) -> dict[str, set[str]]:
@@ -225,12 +269,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         "trials": len(records),
         "first_refusal_kinds": {},
         "unparseable_classifications": {},
+        "terminations": {},
         "applied_edit_trials": sum(bool(row["applied_edits"]) for row in records),
         "trials_editing_outside_the_repair": sum(
             bool(row["edits_outside_the_repair"]) for row in records
         ),
     }
     for row in records:
+        summary["terminations"][row["termination"]] = (
+            summary["terminations"].get(row["termination"], 0) + 1
+        )
         refusal = row["first_refusal"]
         if refusal is None:
             key = "no refusal"

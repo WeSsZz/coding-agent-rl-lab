@@ -1,3 +1,5 @@
+> SUPERSEDED FOR EXECUTION: follow [next-session.md](next-session.md) and manifests/route-v2-model.json. Historical Qwen3 defaults, automatic model cleanup and untimed paid setup below must NOT be executed.
+
 # 阶段 1：训练架构选型（2026-09-22）
 
 目标：在**单张 96GB GPU、首次 2–4 小时**的约束下，确定一条"真实 Docker 代码环境 + 多轮工具交互 +

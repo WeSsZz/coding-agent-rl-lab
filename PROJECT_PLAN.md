@@ -1,3 +1,7 @@
+# 路线状态提示（2026-09-28）
+
+> 本计划中的 SWE-Gym、旧自定义策略和 GRPO 条目属于已冻结历史路线，不代表当前执行计划。当前主线是在官方 SWE-Gym OpenHands fork 的交互与干净 verifier 上做在线 RL；66 条轨迹 SFT 只是对照。权威路线见 [`docs/swegym-openhands-rl-route.md`](docs/swegym-openhands-rl-route.md)，实测状态见 [`docs/qwen3-openhands-gpu-pilot-20260928.md`](docs/qwen3-openhands-gpu-pilot-20260928.md)。详细隔离边界见 [`docs/legacy-swe-gym-grpo-route.md`](docs/legacy-swe-gym-grpo-route.md)。请勿按下方旧里程碑启动新训练。
+
 # Coding Agent RL Lab 路线图
 
 ## 目标

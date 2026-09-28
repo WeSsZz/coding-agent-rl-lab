@@ -1,3 +1,5 @@
+> SUPERSEDED FOR EXECUTION: follow [next-session.md](next-session.md) and manifests/route-v2-model.json. Historical Qwen3 defaults, automatic model cleanup and untimed paid setup below must NOT be executed.
+
 # 阶段 5：GPU 会话运行手册（2026-09-22）
 
 **目的**：把付费时间只花在"验证"上，不花在"试错"上。开机后照着这份文档执行，每一步都有判据。
@@ -46,7 +48,7 @@ bash scripts/gpu/setup_instance.sh --slim
 
 它会依次做：预检 → 清点 → 瘦身 → **在 pinned commit `1876b06d…` 上 clone veRL** →
 `uv run --frozen --all-packages --extra vllm --extra fsdp` 物化环境 →
-下载 Qwen3-8B 并用 `envs/` 里已固定的 `config.json` / `tokenizer_config.json` 的 sha256 校验。
+下载学生模型并用 `envs/` 里已固定的 sha256 校验。
 
 **关键发现（读上游 `install.rst` 得到，不是猜的）**：veRL v0.9.1 **没有安装步骤**——
 `uv run --frozen --extra vllm --extra fsdp` 直接从仓库里已提交的 `uv.lock` 物化 `.venv`。
@@ -55,8 +57,32 @@ bash scripts/gpu/setup_instance.sh --slim
 **这一步最耗时**（torch 2.11 + vllm 0.24 + flash-attn 的轮子，约 10–30 分钟），
 所以我把它放在计时之前，并记录实际秒数。
 
-模型问题的答案：**Qwen3-8B 没有预下载**。旧实例只有 route v1 的 Qwen2.5-Coder 快照。
-下载走 `HF_ENDPOINT=https://hf-mirror.com`（`huggingface.co` 在 worker 上实测不可达）。
+---
+
+## 2.1 学生模型：Qwen2.5-Coder-7B-Instruct（主线，单一模型）
+
+**决策与理由记录在 `manifests/route-v2-model.json`。** 一句话：
+
+> 旧路线 GRPO 卡死的根因**不是 OOM**，而是**基线几乎从不成功 → 组内奖励全同 → 无优势 → 梯度为零**。
+> 所以基座的"偶尔能成功"是 GRPO 的前提，而代码专用模型比通用推理模型更可能满足它。
+
+| | Qwen2.5-Coder-7B-Instruct（主线） | Qwen3-8B（已记录的可选替代，本轮不跑） |
+| --- | --- | --- |
+| 模板原生支持 tools | 是（**实测**） | 是（实测） |
+| `enable_thinking` 开关 | 无（因此 non-thinking 是空操作） | 有 |
+| 字符串 arguments 直通 | **否** → 见下方约束 | 是 |
+| 预计体积 | 约 15 GB | 约 16 GB |
+| 可能已在克隆里 | 是（待清点确认） | 否，必须下载 |
+
+**必须记住的一条数据管线约束（预检会以 WARN 报出，不要当成缺陷）**：
+主线模板**没有** `is string` 守卫，会对 `arguments` 无条件做 `tojson`。
+而轨迹数据集把 `arguments` 存成 **JSON 字符串**，所以 **SFT 渲染前必须 `json.loads()`**，
+否则工具调用会被二次编码。数据集卡自带的 `filter_and_deserialize` 就是干这个的。
+
+**下载通道**：`huggingface.co` 在工作机与 worker 上都不可达，走 `HF_ENDPOINT=https://hf-mirror.com`。
+**该镜像会间歇性掉连接**，所以 `fetch_model.sh` 内置重试与一个只依赖 `curl` 的回退路径。
+模型问题答案：**没有预下载**；如果克隆带了旧的 Qwen2.5 权重就直接复用，否则下载约 15 GB。
+
 
 ---
 

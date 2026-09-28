@@ -1,18 +1,6 @@
 #!/usr/bin/env bash
-# Reclaim disk on a cloned GPU instance, safely.
-#
-# Route v1 left several tens of gigabytes of Qwen2.5-Coder weights that route v2 will never
-# load, plus caches and logs. This script deletes only from an explicit allow-list, protects an
-# explicit keep-list, prints what it would do by default, and requires `--apply` to act.
-#
-# Why an allow-list rather than "find and rm": the clone also carries the only copies of the
-# trained LoRA adapters and the environment record that makes route v1 re-runnable at all.
-# A pattern-based delete is exactly how those get destroyed by accident.
-#
-# Usage:
-#   bash scripts/gpu/slim_disk.sh                 # dry run: print what would go
-#   bash scripts/gpu/slim_disk.sh --apply         # actually delete
-#   bash scripts/gpu/slim_disk.sh --apply --keep-instance-record   # default; see KEEP below
+# Optional package-cache cleanup only. Never deletes models, adapters or model caches.
+# Dry run by default; --apply explicitly removes eligible package caches.
 set -uo pipefail
 
 APPLY=0
@@ -29,6 +17,9 @@ HOME_ROOT=${HOME_ROOT:-/root}
 
 # Anything matching one of these is never deleted, no matter what else says otherwise.
 KEEP_PATTERNS=(
+  'qwen'
+  'huggingface'
+  'modelscope'
   'lora'
   'adapter'
   'peft-0.21.0-overlay'
@@ -42,16 +33,9 @@ KEEP_PATTERNS=(
 
 # Explicit, re-downloadable bulk. Each entry is removed only if it exists.
 CANDIDATES=(
-  # Old route's policy models. Route v2 uses Qwen/Qwen3-8B; these are re-downloadable.
-  "$AUTODL/qwen2.5-coder-7b-modelscope"
-  "$AUTODL/qwen2.5-coder-14b-modelscope"
-  "$AUTODL/qwen2.5-coder-7b"
-  "$AUTODL/qwen2.5-coder-14b"
-  # Caches: regenerated on demand.
+  # Only rebuildable package caches. Models, HF/ModelScope caches and adapters are preserved.
   "$HOME_ROOT/.cache/pip"
   "$HOME_ROOT/.cache/uv"
-  "$HOME_ROOT/.cache/huggingface/hub"
-  "$HOME_ROOT/.cache/modelscope"
 )
 
 is_protected() {

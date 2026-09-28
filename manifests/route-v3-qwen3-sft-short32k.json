@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "status": "cpu_data_preflight_passed_gpu_unverified",
+  "model": "Qwen/Qwen3-8B",
+  "revision": "b968826d9c46dd6066d109eabc6255188de91218",
+  "thinking_mode": "non-thinking",
+  "source_dataset": "nebius/SWE-rebench-openhands-trajectories",
+  "source_revision": "35455389ab51bf5e2306bfd436ef72d0f98bf882",
+  "source_selection": "First Parquet row group; shortest serialized successful trajectory per unique issue; first 128 candidates; evaluation repositories excluded",
+  "whole_parquet_hash_verified": false,
+  "locally_replayed": false,
+  "candidate_trajectories": 126,
+  "accepted_trajectories": 66,
+  "rejected_over_32768_tokens": 60,
+  "min_tokens": 21426,
+  "max_tokens": 32759,
+  "total_tokens": 1914888,
+  "total_supervised_tokens": 540720,
+  "remote_artifacts": {
+    "model": "/root/Qwen3-8B",
+    "model_verification": "/root/autodl-tmp/route-v2/work/qwen3-8b-system-verification.json",
+    "preflight": "/root/autodl-tmp/route-v2/work/route-v3-qwen3/preflight-32k.json",
+    "training_data": "/root/autodl-tmp/route-v2/work/route-v3-qwen3/sft-short32k"
+  },
+  "hashes": {
+    "source_sample_sha256": "497e82d0a0650b776f1a549567bfe51e86a6453afa4e536da266626a8b1bf5f2",
+    "prepared_trajectories_sha256": "02a11bbedf69c5a0ec01829326f25bb72587a077b2d3ad4a567c3a03e7f6d8b6",
+    "preflight_sha256": "6202baf079d3ebaebf3543f83c4a5a7db7344719a8ba3aeaca40c2cab3b692d5",
+    "training_data_sha256": "656df5e40f1a457fc5f66412ed64a7e780463ebfed9421f253671cf1b61b9848",
+    "training_manifest_sha256": "9438b22152652d74e6e703b1184503455e139219a9f95994299536a7d36e271b",
+    "model_verification_sha256": "d6a93c71aae276d8296a961bd161b12265df0ab2d5be85ac047dc402e681d6ac"
+  }
+}

@@ -1,0 +1,2 @@
+# Additional package required by the validated long-context GPU training path.
+liger-kernel==0.8.3

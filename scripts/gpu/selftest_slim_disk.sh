@@ -42,12 +42,12 @@ build_fixture "$WORK"
 HOME_ROOT="$WORK" AUTODL_DATA="$WORK/autodl-tmp" bash "$SLIM" >"$WORK/dry.log" 2>&1
 check "model directory survives a dry run" "$([ -d "$WORK/autodl-tmp/qwen2.5-coder-14b-modelscope" ] && echo 1 || echo 0)"
 check "pip cache survives a dry run" "$([ -d "$WORK/.cache/pip" ] && echo 1 || echo 0)"
-check "the dry run names the model directory" "$(grep -q 'qwen2.5-coder-14b-modelscope' "$WORK/dry.log" && echo 1 || echo 0)"
+
 
 echo "=== apply deletes the disposable bulk ==="
 build_fixture "$WORK"
 HOME_ROOT="$WORK" AUTODL_DATA="$WORK/autodl-tmp" bash "$SLIM" --apply >"$WORK/apply.log" 2>&1
-check "model directory is gone" "$([ ! -d "$WORK/autodl-tmp/qwen2.5-coder-14b-modelscope" ] && echo 1 || echo 0)"
+check "model directory survives apply" "$([ -d "$WORK/autodl-tmp/qwen2.5-coder-14b-modelscope" ] && echo 1 || echo 0)"
 check "pip cache is gone" "$([ ! -d "$WORK/.cache/pip" ] && echo 1 || echo 0)"
 
 echo "=== apply must not touch the only copies ==="
@@ -57,9 +57,9 @@ check "evidence directory survives" "$([ -f "$WORK/sftv24-evidence/report.json" 
 
 echo "=== a protected directory nested inside a candidate protects the candidate ==="
 build_fixture "$WORK"
-mkdir -p "$WORK/autodl-tmp/qwen2.5-coder-14b-modelscope/keep-lora"
+mkdir -p "$WORK/.cache/pip/keep-lora"
 HOME_ROOT="$WORK" AUTODL_DATA="$WORK/autodl-tmp" bash "$SLIM" --apply >"$WORK/nested.log" 2>&1
-check "candidate with a protected child survives" "$([ -d "$WORK/autodl-tmp/qwen2.5-coder-14b-modelscope/keep-lora" ] && echo 1 || echo 0)"
+check "candidate with a protected child survives" "$([ -d "$WORK/.cache/pip/keep-lora" ] && echo 1 || echo 0)"
 check "the skip is reported" "$(grep -q 'contains protected path' "$WORK/nested.log" && echo 1 || echo 0)"
 
 echo "=== a missing candidate is not an error ==="

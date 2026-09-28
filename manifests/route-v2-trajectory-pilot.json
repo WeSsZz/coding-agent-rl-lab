@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "status": "format_and_tokenizer_pilot_only",
+  "dataset_id": "nebius/SWE-rebench-openhands-trajectories",
+  "revision": "35455389ab51bf5e2306bfd436ef72d0f98bf882",
+  "source_url": "https://huggingface.co/datasets/nebius/SWE-rebench-openhands-trajectories/tree/35455389ab51bf5e2306bfd436ef72d0f98bf882",
+  "license": "CC-BY-4.0",
+  "attribution": "Trofimova et al., OpenHands Trajectories with Qwen3-Coder-480B-A35B-Instruct (2025)",
+  "retrieval": "HTTP range via hf-mirror.com; pyarrow read_row_group(0); first 32 rows converted with pandas to_json(orient=records,lines=True,force_ascii=True)",
+  "sample_rows": 32,
+  "unique_instances": 32,
+  "selection": "first 32 source rows; not random, not a representative training sample",
+  "success_evidence": "upstream resolved=1 AND exit_status=submit; not locally replayed",
+  "upstream_parquet_lfs": {
+    "sha256": "14048dd1fcd22ce094b6e85f8a38f223a9ef1327031aaaad052804870212efa1",
+    "size": 2079503354,
+    "pointerSize": 135
+  },
+  "whole_parquet_hash_verified": false,
+  "local_files": {
+    "work\\route-v2\\source\\sample.jsonl": "891e5481ccb5cab07f83c55414fa3d8d26cfa0fde7cb5081eb44159838996e6f",
+    "work\\route-v2\\source\\README.md": "90fa586c747d9ed1022c28847439489576049cde7de1fdfb80d24b2a0ae77b32",
+    "work\\route-v2\\source\\inventory.json": "aef32dbf350f1b226740a1c75191f020a47fa1e0e633b7afb157764d41ef0182"
+  },
+  "tokenizer_pilot": {
+    "model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "revision": "c03e6d358207e414f1eca0bb1891e29f1db0e242",
+    "transformers_version": "5.9.0",
+    "max_length": 16384,
+    "accepted_examples": 169,
+    "rejections": {
+      "over_max_length": 690
+    },
+    "min_tokens": 6711,
+    "max_tokens": 16356,
+    "total_supervised_tokens": 17769,
+    "min_supervised_tokens": 24,
+    "training_ready": false,
+    "runtime_checked": false,
+    "prepared_report_sha256": "d04acc1eb8bfc2a3af1539c0c20585559e2d8a03a96530222a4a78c27326976f",
+    "complete_trajectories_within_limit": 0,
+    "trajectories_checked": 15,
+    "report_sha256": "9ac7d181c0897a8ffea5fe1a8e2ec99f4bdb6b4db9e13d3816522224bf80370f"
+  }
+}

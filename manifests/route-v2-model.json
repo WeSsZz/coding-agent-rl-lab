@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "manifest_id": "route-v2-student-model",
+  "generated_at": "2026-09-22",
+  "decision": {
+    "mainline": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "recorded_alternative": "Qwen/Qwen3-8B",
+    "switched_because": [
+      "User selected Qwen2.5-Coder to preserve the SWE-Gym model-family baseline and reduce simultaneous changes. No claim that Qwen3 is weaker is made.",
+      "SWE-Gym demonstrated teacher-success-trajectory SFT on Qwen2.5-Coder. Its 20.6% Verified result was the 32B teacher-SFT arm, not a 7B result or a demonstrated GRPO gain.",
+      "The pinned template supports tool schemas; trajectory function.arguments must be deserialized before rendering.",
+      "Existing weights may be reused only after matching pinned configuration, all required shards, and upstream content hashes."
+    ],
+    "explicitly_not_claimed": "No model capability gain or GRPO benefit has been established for route v2. Raw base success is not a necessary precondition for SFT; the policy entering GRPO needs useful reward variation.",
+    "what_this_costs": "Every route-v1 Qwen2.5 number is from the old framework and old tool protocol, so none of it may be compared with route-v2 numbers. The base run has to be redone on the new scaffold regardless, which is work this plan already included."
+  },
+  "models": {
+    "mainline": {
+      "id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+      "revision": "c03e6d358207e414f1eca0bb1891e29f1db0e242",
+      "tokenizer_config_json_sha256": "959e7f1d9a1b7641a6d6ce05ca97b75c7894fcb66cbe5a040406458fb1128ee4",
+      "config_json_sha256": "c0242402ad6a13b331ea320feea8c7e3776ffb7a4eff0757b9cd667e116d9a28",
+      "chat_template": "envs/qwen25-coder-7b-chat-template.jinja",
+      "chat_template_sha256": "cd8e9439f0570856fd70470bf8889ebd8b5d1107207f67a5efb46e342330527f",
+      "template_capabilities": {
+        "tools_branch": true,
+        "tool_call_markers": true,
+        "enable_thinking_switch": false,
+        "string_arguments_passthrough": false,
+        "reasoning_content": false
+      },
+      "size": "about 15 GB of bfloat16 safetensors",
+      "license": "apache-2.0 (stated on the model card)"
+    },
+    "recorded_alternative": {
+      "id": "Qwen/Qwen3-8B",
+      "revision": "b968826d9c46dd6066d109eabc6255188de91218",
+      "tokenizer_config_json_sha256": "d5d09f07b48c3086c508b30d1c9114bd1189145b74e982a265350c923acd8101",
+      "config_json_sha256": "f7c4eadfbbf522470667b797a3c89be2524832d2d599797248dc304fff447c30",
+      "chat_template": "envs/qwen3-8b-chat-template.jinja",
+      "chat_template_sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8",
+      "template_capabilities": {
+        "tools_branch": true,
+        "tool_call_markers": true,
+        "enable_thinking_switch": true,
+        "string_arguments_passthrough": true,
+        "reasoning_content": true
+      },
+      "why_kept": "Its template and tool contract are pinned at zero ongoing cost, so revisiting the choice later does not mean re-deriving them. It is NOT run in this round.",
+      "thinking_mode": "non-thinking, if it is ever used: the template emits an empty <think></think> block when enable_thinking is false"
+    }
+  },
+  "pipeline_constraint_this_creates": {
+    "statement": "The SFT pipeline MUST deserialize tool_calls[].function.arguments before rendering.",
+    "why": "The mainline template has no `is string` guard, so it runs arguments through `tojson` unconditionally. Trajectory datasets store arguments as a JSON string, so rendering them as-is produces a double-encoded call.",
+    "evidence": "scripts/preflight_chat_template.py, scenario 4, reports this as a WARN on the mainline template and pins it with tests/test_preflight_chat_template.py::test_the_mainline_template_double_encodes_string_arguments",
+    "not_a_defect": "The template is fine. The dataset card's own filter_and_deserialize helper does this deserialization, so the requirement is documented upstream rather than invented here."
+  },
+  "not_preinstalled": {
+    "statement": "Neither model is guaranteed to be present. A clone of the old instance is expected to carry Qwen2.5-Coder snapshots, but that is unverified until the inventory runs; if it is absent, the weights must be downloaded.",
+    "download_path": "HF_ENDPOINT=https://hf-mirror.com; huggingface.co is unreachable from the workstation and the worker, and the mirror itself drops connections intermittently, so scripts/gpu/fetch_model.sh retries and has a curl-only fallback.",
+    "cache_path_default": "/root/autodl-tmp/models/Qwen2.5-Coder-7B-Instruct"
+  },
+  "unverified": [
+    "that the clone carries Qwen2.5-Coder-7B-Instruct weights",
+    "the actual base resolve rate of either model on the frozen development split - this is what would justify the choice with data, and it has not been measured",
+    "that hf-mirror.com is reachable from the AutoDL box"
+  ]
+}

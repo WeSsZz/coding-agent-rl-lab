@@ -9,6 +9,9 @@ description = "A verifier-first lab for coding-agent rollouts and policy optimiz
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+trajectory-prep = ["jsonschema==4.26.0"]
+
 [project.scripts]
 coding-agent-rl = "coding_agent_rl_lab.__main__:main"
 

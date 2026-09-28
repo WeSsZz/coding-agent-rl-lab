@@ -1,0 +1,37 @@
+{
+  "schema": "complete-trajectory-tokens-v1",
+  "model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "revision": "c03e6d358207e414f1eca0bb1891e29f1db0e242",
+  "max_length": 32768,
+  "data_sha256": "09fdf673429882d43851800e8f1ff7e0502e2aa40d4f2267b0908d6bf1dd20a8",
+  "tokenizer_hashes": {
+    "tokenizer.json": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+    "tokenizer_config.json": "959e7f1d9a1b7641a6d6ce05ca97b75c7894fcb66cbe5a040406458fb1128ee4",
+    "config.json": "c0242402ad6a13b331ea320feea8c7e3776ffb7a4eff0757b9cd667e116d9a28"
+  },
+  "tools_sha256": "d13c473da05d5cd18f6d2fb23146015585f4159fb64cb819fdc9dd8948caae9d",
+  "split_sha256": "793a78814bf4a649994f83d614d3ec64a256221cb867817e58d71e4a61a7fc72",
+  "preflight_sha256": "88bb8f6a12de36a36d8f2975748ea6a387889d3ad1f4b7918def21fdf9401d79",
+  "trajectory_count": 65,
+  "total_tokens": 1884388,
+  "total_supervised_tokens": 533137,
+  "rejections": {
+    "over_max_length": 61
+  },
+  "training_ready": false,
+  "runtime_checked": false,
+  "purpose": "short-trajectory SFT smoke candidate; upstream success labels, no local replay",
+  "source_dataset": "nebius/SWE-rebench-openhands-trajectories",
+  "source_revision": "35455389ab51bf5e2306bfd436ef72d0f98bf882",
+  "license": "CC-BY-4.0",
+  "attribution": "Trofimova et al. (2025), OpenHands Trajectories with Qwen3-Coder-480B-A35B-Instruct",
+  "selection": "First Parquet row group only, shortest serialized successful trajectory per issue, 128 candidates; exclude all evaluation repositories; keep complete sequences <=32768 tokens.",
+  "source_fetch_report_sha256": "abce36de088fa85b08bb06fa7e89eb4ab090fa3d0bc9766caa1cf638a640a906",
+  "independent_instances": 65,
+  "repositories": 62,
+  "whole_parquet_hash_verified": false,
+  "locally_replayed": false,
+  "artifact_directory": "work/route-v2/sft-short32k",
+  "data_preflight_passed": true,
+  "gpu_smoke_passed": false
+}

@@ -1,111 +1,170 @@
 #!/usr/bin/env bash
-# Fetch Qwen3-8B weights on the GPU box, preferring whichever host actually answers.
-#
-# The model is NOT pre-installed. The old instance carries Qwen2.5-Coder snapshots from route
-# v1; route v2 uses Qwen3-8B, about 16 GB of bfloat16 safetensors that has to be downloaded.
-# `huggingface.co` is unreachable from this project's networks, so the mirror path is the
-# expected one.
-#
-# The download is verified against the two files this repository already pinned:
-#   config.json            sha256 f7c4eadfbbf522470667b797a3c89be2524832d2d599797248dc304fff447c30
-#   tokenizer_config.json  sha256 d5d09f07b48c3086c508b30d1c9114bd1189145b74e982a265350c923acd8101
-# A mismatch means the mirror served a different revision than the one the chat template was
-# pinned from, which would silently change every prompt.
-#
-# Usage:
-#   bash scripts/gpu/fetch_model.sh [target-dir]
+# Fetch only the model/revision selected in route-v2-model.json, then verify every weight shard.
 set -uo pipefail
 
-MODEL=${MODEL_ID:-Qwen/Qwen3-8B}
-TARGET=${1:-/root/autodl-tmp/models/Qwen3-8B}
-EXPECT_CONFIG=f7c4eadfbbf522470667b797a3c89be2524832d2d599797248dc304fff447c30
-EXPECT_TOKENIZER=d5d09f07b48c3086c508b30d1c9114bd1189145b74e982a265350c923acd8101
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+PINNED_MODEL=$(python3 "$ROOT/scripts/model_contract.py" --field id)
+PINNED_REVISION=$(python3 "$ROOT/scripts/model_contract.py" --field revision)
+MODEL=${MODEL_ID:-$PINNED_MODEL}
+REVISION=${REVISION:-$PINNED_REVISION}
+[ "$MODEL" = "$PINNED_MODEL" ] && [ "$REVISION" = "$PINNED_REVISION" ] || {
+  echo "Download model/revision differs from manifest" >&2; exit 2;
+}
+TARGET=${1:-/root/autodl-tmp/models/${MODEL##*/}}
+mkdir -p "$TARGET"
 
 echo "=== target ==="
 echo "  $TARGET"
-mkdir -p "$TARGET"
 
 echo
 echo "=== choosing an endpoint ==="
 ENDPOINT=""
+probe_endpoint() {
+  # The mirror is intermittently unreachable: the same URL that answers 200 can drop the
+  # connection a minute later. Retry before concluding anything.
+  local candidate=$1 attempt code
+  for attempt in 1 2 3; do
+    code=$(curl -sL -o /tmp/model-api.json -w '%{http_code}' --max-time 20 \
+           "$candidate/api/models/$MODEL" 2>/dev/null) || code=000
+    if [ "$code" = "200" ]; then
+      printf '%s' "$code"
+      return 0
+    fi
+    sleep 3
+  done
+  printf '%s' "${code:-000}"
+  return 1
+}
+
 for candidate in "https://hf-mirror.com" "https://huggingface.co"; do
-  code=$(curl -sL -o /dev/null -w '%{http_code}' --max-time 20 "$candidate/api/models/$MODEL" || echo 000)
-  printf '  %-28s %s\n' "$candidate" "$code"
+  printf '  %-28s ' "$candidate"
+  code=$(probe_endpoint "$candidate")
+  echo "$code"
   if [ "$code" = "200" ] && [ -z "$ENDPOINT" ]; then
     ENDPOINT="$candidate"
+
   fi
 done
 
 if [ -z "$ENDPOINT" ]; then
-  echo
-  echo "no HuggingFace-compatible endpoint answered; trying ModelScope instead"
-  if command -v modelscope >/dev/null 2>&1; then
-    modelscope download --model "$MODEL" --local_dir "$TARGET"
-  else
-    echo "FAILED: neither a HF endpoint nor the modelscope CLI is available"
-    echo "install one of:  uv pip install huggingface_hub   |   pip install modelscope"
-    exit 1
-  fi
+  echo "No endpoint available; stop without downloading an unpinned alternative" >&2
+  exit 1
+fi
+bash "$ROOT/scripts/gpu/verify_model_revision.sh" "$MODEL" "$REVISION" "$ENDPOINT" || exit 1
+
+echo
+echo "=== attempting a download client ==="
+START=$(date +%s)
+CLIENT=""
+TRIED_HUB=0
+
+if command -v hf >/dev/null 2>&1; then
+  CLIENT="hf"
+  HF_ENDPOINT="$ENDPOINT" hf download "$MODEL" ${REVISION:+--revision "$REVISION"} --local-dir "$TARGET"
+elif command -v huggingface-cli >/dev/null 2>&1; then
+  CLIENT="huggingface-cli"
+  HF_ENDPOINT="$ENDPOINT" huggingface-cli download "$MODEL" ${REVISION:+--revision "$REVISION"} --local-dir "$TARGET"
+elif command -v uvx >/dev/null 2>&1; then
+  CLIENT="uvx"
+  HF_ENDPOINT="$ENDPOINT" uvx --from huggingface_hub hf download "$MODEL" ${REVISION:+--revision "$REVISION"} --local-dir "$TARGET"
 else
-  echo
-  echo "  using $ENDPOINT"
-  code=$(curl -sL --max-time 25 "$ENDPOINT/api/models/$MODEL" -o /tmp/model-api.json -w '%{http_code}')
-  if [ "$code" = "200" ]; then
-    python3 - <<'PY' 2>/dev/null || true
-import json
-data = json.load(open("/tmp/model-api.json"))
-print("  resolved revision:", data.get("sha"))
-print("  last modified:    ", data.get("lastModified"))
+  TRIED_HUB=1
+  python3 - "$ENDPOINT" "$MODEL" "$REVISION" "$TARGET" <<'PY' && CLIENT="huggingface_hub"
+import os, sys
+try:
+    from huggingface_hub import snapshot_download
+except Exception:
+    sys.exit(3)
+endpoint, model, revision, target = sys.argv[1:5]
+os.environ["HF_ENDPOINT"] = endpoint
+snapshot_download(repo_id=model, revision=revision or None, local_dir=target)
 PY
+  if [ $? -ne 0 ]; then
+    echo "  huggingface_hub not importable; falling back to curl"
+    CLIENT=""
   fi
-
-  export HF_ENDPOINT="$ENDPOINT"
-  START=$(date +%s)
-  if command -v hf >/dev/null 2>&1; then
-    hf download "$MODEL" --local-dir "$TARGET"
-  elif command -v huggingface-cli >/dev/null 2>&1; then
-    huggingface-cli download "$MODEL" --local-dir "$TARGET"
-  else
-    python3 -m pip install --quiet huggingface_hub
-    python3 -m huggingface_hub.commands.huggingface_cli download "$MODEL" --local-dir "$TARGET"
-  fi
-  END=$(date +%s)
-  echo "  download took $((END - START)) seconds"
 fi
 
-echo
-echo "=== verification against the pinned files ==="
-failures=0
-for pair in "config.json=$EXPECT_CONFIG" "tokenizer_config.json=$EXPECT_TOKENIZER"; do
-  name=${pair%%=*}
-  expected=${pair#*=}
-  path="$TARGET/$name"
-  if [ ! -f "$path" ]; then
-    echo "  FAIL  $name missing"
-    failures=$((failures + 1))
-    continue
-  fi
-  actual=$(sha256sum "$path" | cut -d' ' -f1)
-  if [ "$actual" = "$expected" ]; then
-    echo "  ok    $name"
-  else
-    echo "  FAIL  $name"
-    echo "        expected $expected"
-    echo "        actual   $actual"
-    failures=$((failures + 1))
-  fi
-done
+if [ -z "$CLIENT" ]; then
+  echo "  using the dependency-free curl path"
+  python3 - "$ENDPOINT" "$MODEL" "$REVISION" "$TARGET" "$ROOT/work/model-inventory.json" <<'PY'
+import json, os, subprocess, sys
 
-echo
-echo "=== contents ==="
-du -sh "$TARGET"
-ls -1 "$TARGET" | head -20
-echo "  weight shards: $(find "$TARGET" -name '*.safetensors' | wc -l)"
+endpoint, model, revision, target, cached_listing = sys.argv[1:6]
+revision = revision or "main"
 
-echo
-if [ $failures -eq 0 ]; then
-  echo "RESULT: OK"
-  exit 0
+
+def listing_from_cache():
+    """The endpoint probe already fetched this; reusing it avoids a second flaky request."""
+    try:
+        return json.loads(open(cached_listing, encoding="utf-8").read())
+    except Exception:
+        return None
+
+
+def listing_fresh(attempts=3):
+    last = ""
+    for _ in range(attempts):
+        result = subprocess.run(
+            ["curl", "-sL", "--fail", "--max-time", "60", f"{endpoint}/api/models/{model}/revision/{revision}?blobs=true"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            try:
+                return json.loads(result.stdout)
+            except Exception as exc:
+                last = f"{type(exc).__name__}: {exc}"
+                continue
+        last = f"curl exit {result.returncode} {result.stderr.strip()[:120]}"
+    print(f"  FAILED to list files: {last}")
+    return None
+
+
+data = listing_from_cache() or listing_fresh()
+if data is None:
+    sys.exit(1)
+
+siblings = [entry["rfilename"] for entry in data.get("siblings", [])]
+siblings = [name for name in siblings if name.endswith((".safetensors", ".json", ".txt", ".model", ".jinja"))]
+if not siblings:
+    print("  FAILED: the model API returned no files")
+    sys.exit(1)
+
+print(f"  {len(siblings)} file(s) listed")
+
+
+def fetch(name, attempts=3):
+    destination = os.path.join(target, name)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    url = f"{endpoint}/{model}/resolve/{revision}/{name}"
+    for attempt in range(1, attempts + 1):
+        result = subprocess.run(
+            ["curl", "-sL", "--fail", "--max-time", "3600", "-o", destination,
+             "-w", "%{size_download}", url],
+            capture_output=True, text=True,
+        )
+        size = result.stdout.strip()
+        if result.returncode == 0 and size not in ("", "0"):
+            return True, f"{size} bytes"
+        if attempt < attempts:
+            continue
+        return False, f"curl exit {result.returncode}, {size or 'no'} bytes"
+    return False, "unreachable"
+
+
+failed = 0
+for index, name in enumerate(siblings, 1):
+    ok, detail = fetch(name)
+    print(f"    [{index}/{len(siblings)}] {name} {'ok' if ok else 'FAILED'} ({detail})")
+    if not ok:
+        failed += 1
+sys.exit(1 if failed else 0)
+PY
 fi
-echo "RESULT: FAILED ($failures) - do not train against this copy"
-exit 1
+END=$(date +%s)
+echo "  client: ${CLIENT:-curl}; elapsed $((END - START))s"
+
+echo
+echo "=== verifying complete pinned model contents ==="
+python3 "$ROOT/scripts/model_contract.py" --directory "$TARGET" \
+  --inventory "$ROOT/work/model-inventory.json" --output "$TARGET/route-v2-verification.json"

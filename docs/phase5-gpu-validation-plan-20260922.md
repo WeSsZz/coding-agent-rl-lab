@@ -1,3 +1,5 @@
+> SUPERSEDED FOR EXECUTION: follow [next-session.md](next-session.md) and manifests/route-v2-model.json. Historical Qwen3 defaults, automatic model cleanup and untimed paid setup below must NOT be executed.
+
 # 阶段 5：短租 GPU 可行性验证——计划与授权请求（2026-09-22）
 
 本轮**不训练、不追求效果**。目标只有一件事：在真实租来的单卡上，按顺序验证"这条链路到底能不能跑"，

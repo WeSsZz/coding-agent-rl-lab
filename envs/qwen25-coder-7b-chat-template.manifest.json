@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "manifest_id": "chat-template",
+  "generated_at": "2026-09-22",
+  "model_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "revision": "c03e6d358207e414f1eca0bb1891e29f1db0e242",
+  "source": {
+    "file": "tokenizer_config.json",
+    "local_copy_sha256": "959e7f1d9a1b7641a6d6ce05ca97b75c7894fcb66cbe5a040406458fb1128ee4",
+    "retrieved_via": "https://hf-mirror.com (huggingface.co is unreachable from this project)"
+  },
+  "tokenizer_class": "Qwen2Tokenizer",
+  "model_max_length": 32768,
+  "template": {
+    "path": "envs/qwen25-coder-7b-chat-template.jinja",
+    "sha256": "cd8e9439f0570856fd70470bf8889ebd8b5d1107207f67a5efb46e342330527f",
+    "characters": 2507,
+    "line_endings": "LF"
+  },
+  "markers_required": {
+    "tools_branch": true,
+    "tool_call": true,
+    "tool_response": true
+  },
+  "markers_optional": {
+    "enable_thinking": false,
+    "arguments_string_passthrough": false,
+    "reasoning_content": false
+  },
+  "non_thinking_contract": "Qwen3 templates emit '<think>\\n\\n</think>\\n\\n' when `enable_thinking` is defined and false; that empty block is what non-thinking mode means for those models, and SFT rendering and RL rollout must pass the same flag or the token streams differ. This template has no such switch, so the generation prompt ends at the assistant header."
+}

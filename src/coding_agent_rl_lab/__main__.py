@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from .evaluation import evaluate
@@ -21,6 +22,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    if os.environ.get("CODING_AGENT_ALLOW_LEGACY_ROUTE") != "1":
+        raise SystemExit(
+            "coding-agent-rl smoke/evaluate use the retired custom environment. "
+            "Use coding_agent_rl_lab.openhands_rl for the Qwen3/OpenHands route; "
+            "set CODING_AGENT_ALLOW_LEGACY_ROUTE=1 only for historical reproduction."
+        )
     args = build_parser().parse_args()
     project_root = Path(__file__).resolve().parents[2]
     if args.command == "smoke":

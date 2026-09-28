@@ -149,6 +149,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    if os.environ.get("CODING_AGENT_ALLOW_LEGACY_GRPO") != "1":
+        raise SystemExit(
+            "Legacy custom-worker GRPO is retired from the Qwen3/OpenHands route. "
+            "Use coding_agent_rl_lab.openhands_rl; set "
+            "CODING_AGENT_ALLOW_LEGACY_GRPO=1 only to reproduce historical runs."
+        )
     args = build_parser().parse_args()
     _validate_args(args)
     model_path = Path(args.model_path).resolve()

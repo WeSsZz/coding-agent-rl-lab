@@ -56,9 +56,27 @@ def main(argv: list[str] | None = None) -> int:
     arguments.output.write_bytes(template.encode("utf-8"))
 
     manifest_path = arguments.manifest or arguments.output.with_suffix(".manifest.json")
+    # Required: without these the adopted OpenHands function-calling schema cannot be rendered at
+    # all. Optional and merely recorded: Qwen3 templates carry an `enable_thinking` switch and
+    # Qwen2.5-Coder templates do not, and that difference is expected rather than a defect.
+    required_markers = {
+        "tools_branch": "{%- if tools %}" in template or "{% if tools %}" in template,
+        "tool_call": "<tool_call>" in template,
+        "tool_response": "<tool_response>" in template,
+    }
+    optional_markers = {
+        "enable_thinking": "enable_thinking" in template,
+        # Whether a JSON *string* of arguments is passed through or run through `tojson` again.
+        # Qwen3 guards this with `is string`; Qwen2.5-Coder does not, so a trajectory whose
+        # arguments are stored as a string must be deserialized before rendering or the tool call
+        # ends up double-encoded.
+        "arguments_string_passthrough": "tool_call.arguments is string" in template,
+        "reasoning_content": "reasoning_content" in template,
+    }
+
     manifest = {
         "schema_version": 1,
-        "manifest_id": "qwen3-8b-chat-template",
+        "manifest_id": "chat-template",
         "generated_at": "2026-09-22",
         "model_id": arguments.model_id,
         "revision": arguments.revision,
@@ -75,22 +93,16 @@ def main(argv: list[str] | None = None) -> int:
             "characters": len(template),
             "line_endings": "LF",
         },
-        "markers_present": {
-            marker: marker in template
-            for marker in (
-                "{%- if tools %}",
-                "<tool_call>",
-                "</tool_call>",
-                "<tool_response>",
-                "</tool_response>",
-                "enable_thinking",
-                "<|im_start|>",
-                "<|im_end|>",
-            )
-        },
+        "markers_required": required_markers,
+        "markers_optional": optional_markers,
         "non_thinking_contract": (
-            "The template emits '<think>\\n\\n</think>\\n\\n' when `enable_thinking` is defined and "
-            "false. That empty block is what 'non-thinking mode' means for this project, and both "
+            "Qwen3 templates emit '<think>\\n\\n</think>\\n\\n' when `enable_thinking` is defined "
+            "and false; that empty block is what non-thinking mode means for those models, and SFT "
+            "rendering and RL rollout must pass the same flag or the token streams differ. This "
+            "template has no such switch, so the generation prompt ends at the assistant header."
+            if not optional_markers["enable_thinking"]
+            else "The template emits '<think>\\n\\n</think>\\n\\n' when `enable_thinking` is defined "
+            "and false. That empty block is what non-thinking mode means for this project, and both "
             "SFT rendering and RL rollout must pass the same flag or the token streams differ."
         ),
     }
@@ -100,10 +112,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"wrote {arguments.output} ({len(template)} chars)")
     print(f"  template sha256 {manifest['template']['sha256']}")
     print(f"  source   sha256 {manifest['source']['local_copy_sha256']}")
+    print(f"  optional markers: " + ", ".join(f"{k}={'Y' if v else 'N'}" for k, v in optional_markers.items()))
     print(f"wrote {manifest_path}")
-    missing = [name for name, present in manifest["markers_present"].items() if not present]
+
+    missing = [name for name, present in required_markers.items() if not present]
     if missing:
-        print(f"FAILED  template is missing expected markers: {missing}")
+        print(f"FAILED  template is missing required markers: {missing}")
         return 1
     return 0
 

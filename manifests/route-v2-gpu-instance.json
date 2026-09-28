@@ -22,7 +22,10 @@
     "billing": "pay as you go"
   },
   "rate": {
-    "cny_per_hour_options": [6.98, 7.35],
+    "cny_per_hour_options": [
+      6.98,
+      7.35
+    ],
     "rate_used_for_the_cap": 7.35,
     "why_the_higher_one": "The panel shows two figures and the higher one is used everywhere so the cap cannot be exceeded by picking the wrong column."
   },
@@ -38,26 +41,28 @@
       "step 3 (SFT forward/backward) OOMs at the 8K length even after enabling offloads",
       "any step fails twice with an unattributable infrastructure error",
       "4 hours elapsed or CNY 40 spent, whichever comes first"
-    ]
+    ],
+    "clock_origin": "Provider billing start; transfer, installation, downloads, verification and training all count.",
+    "enforcement": "setup_instance.sh requires SESSION_STARTED_AT and bounds its process with timeout. This does NOT stop provider billing; platform shutdown must be configured/verified separately."
   },
   "fit_against_the_pinned_stack": {
     "cuda": {
       "instance_reports": 13,
       "pinned_stack_requires": "cu130 wheels (torch 2.11.0, vllm 0.24.0)",
-      "verdict": "compatible; no driver update and no veRL version change needed"
+      "verdict": "Panel reports CUDA 13; actual driver and pinned CUDA runtime compatibility must pass the live GPU preflight, not inferred from image name."
     },
     "disk": {
       "needs": [
-        "Qwen3-8B bfloat16 weights, about 16 GB",
+        "Pinned Qwen2.5-Coder-7B-Instruct BF16 weights, approximately 15 GB",
         "veRL uv environment (torch 2.11 + vllm 0.24 + flash-attn + ray), roughly 25-30 GB including the wheel cache",
         "task images, checkpoints and rollout artefacts"
       ],
       "risk": "the clone may carry roughly 40 GB of Qwen2.5-Coder weights from route v1, so the 81 GB data disk can be exhausted before the model is even fetched",
-      "mitigation": "scripts/gpu/slim_disk.sh runs BEFORE the model download and is a prerequisite, not an optimisation"
+      "mitigation": "Inventory only. Reuse fully verified selected-model weights; setup --slim is disabled. Do not delete model caches."
     },
     "memory_gib": {
       "instance": 110,
-      "verdict": "ample for the rollout farm that will actually live here"
+      "verdict": "GPU host RAM recorded; actual rollout worker capacity requires full-task measurement."
     }
   },
   "architecture_constraint_this_settles": {

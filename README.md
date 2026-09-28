@@ -1,27 +1,20 @@
 # Coding Agent RL Lab
 
-一个与生产 Agent Runtime 解耦的、Verifier-first 的 Agentic RL 实验项目。
+> **路线隔离提示（2026-09-28）**：本 README 下方原有的 SWE-Gym + 自定义工具策略 + GRPO 说明属于已冻结的旧路线，保留作历史复现参考，**不是当前主线**。不要据此构造新训练数据、启动 GRPO，或将旧 adapter/结果与当前模型比较。当前主线见 [`docs/swegym-openhands-rl-route.md`](docs/swegym-openhands-rl-route.md)；旧路线索引见 [`docs/legacy-swe-gym-grpo-route.md`](docs/legacy-swe-gym-grpo-route.md)。
 
-项目目标不是重新实现 Coding IDE 或通用 Agent Framework，而是建立一条可复现的学习闭环：
+## 当前主线
 
-```text
-Coding Task → Isolated Environment → Agent Rollout
-            → Executable Verifier → Reward
-            → Policy Update → Held-out Evaluation
-```
+当前以 Qwen3-8B + SWE-Gym 官方 OpenHands fork 为交互和评测底座，在其上做在线 RL。固定三个 `train` 任务已经完成有模型的真实容器交互和干净 verifier，基线为 0/3；一次随机采样完成了 token/logprob 与零奖励关联。新的一步策略梯度入口是 `python -m coding_agent_rl_lab.openhands_rl`，但尚未得到同任务正负奖励采样组，也未在 GPU 上执行参数更新。66 条完整轨迹的 SFT 仅是对照实验。实验记录见 [`docs/qwen3-openhands-gpu-pilot-20260928.md`](docs/qwen3-openhands-gpu-pilot-20260928.md)。
 
-## 当前阶段：M1.3 模型 rollout 与单步 GRPO 机制验证
+旧 `coding_agent_rl_lab.grpo_train` 使用自定义 Docker worker，不属于当前路线；入口默认拒绝执行，只能设置 `CODING_AGENT_ALLOW_LEGACY_GRPO=1` 用于历史复现。包级 `coding-agent-rl smoke/evaluate` 同样是旧路线，只有设置 `CODING_AGENT_ALLOW_LEGACY_ROUTE=1` 才能运行。不要把旧数据、协议或权重迁移到新训练器。
 
-2026-09-13 更新方向检查已全部完成：SFT 与 GRPO 各 16 条，严格成功均为 0/16。
-GRPO 的 train 有效补丁增加，但新增测试失败更多；regression 有效补丁从 1 条降至 0 条。
-本轮不扩大到多步 GRPO。已加入可选 `conservative-v2` 奖励，拒绝为新增失败或未知测试状态
-提供部分奖励，并降低单纯编辑奖励；新版本尚未用于训练。
-完整结果与下一步见 [本轮实验记录](docs/adapter-direction-check-20260913.md)。
+当前进度、运行约束和待办以 [`docs/swegym-openhands-rl-route.md`](docs/swegym-openhands-rl-route.md) 和 [`docs/qwen3-gpu-handoff.md`](docs/qwen3-gpu-handoff.md) 为准。以下旧路线文档和命令暂时保留，均不得解释为当前主线状态。
 
-当前版本已执行首个具有非零梯度的 fixture 单步 LoRA GRPO 更新，并完成固定 held-out 上的
-基座/fixture-LoRA 对照；两者均为零成功，因此不宣称已经证明 Agentic RL 提升。真实 SWE-Gym
-路径已打通 train-only gold SFT warm-start、分层训练奖励、远程 verifier、多轮工具 rollout 和
-显存可控的 GRPO microbatch；当前真实任务仍是组内全零奖励，瓶颈已定位到编辑动作而非训练 OOM：
+<!-- LEGACY-SWE-GYM-GRPO-ROUTE: 内容从此处起仅供旧路线历史复现；当前任务先阅读 docs/swegym-openhands-rl-route.md。 -->
+
+## 旧路线（已冻结）：SWE-Gym + GRPO
+
+以下内容描述旧的 verifier-first Agentic RL 实验路线。它曾建立 SWE-Gym adapter、逐步工具轨迹、train-only gold-patch SFT warm-start 和 GRPO 更新，但已被当前 Qwen3-8B + 官方 OpenHands fork 路线取代。旧数据和结果不可直接迁移为当前主线训练集或基线。
 
 - `CodingTask`：issue、仓库快照、测试命令、split 与 provenance；
 - `Trajectory`：每一步 action、observation、tool result 和版本信息；

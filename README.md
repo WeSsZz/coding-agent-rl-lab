@@ -90,7 +90,7 @@ pwsh -File scripts/sync_and_validate_vm.ps1 -DockerIntegration
 
 ```powershell
 pwsh -File scripts/sync_and_validate_vm.ps1 -TimeoutSeconds 7200 -RemoteCommand `
-  "PYTHONPATH=src python3 -m coding_agent_rl_lab.swe_gym_rollout --model '<served-model-id>' --api-base http://127.0.0.1:8000/v1 --task-set held-out --repetitions 4 --context-window-tokens 32768 --rows-cache /home/wesz/coding-agent-rl-lab/work/swe-gym-development-rows.jsonl --output work/held-out.json --trajectories work/held-out.jsonl"
+  "PYTHONPATH=src python3 -m coding_agent_rl_lab.swe_gym_rollout --model '<served-model-id>' --api-base http://127.0.0.1:8000/v1 --task-set held-out --repetitions 4 --context-window-tokens 32768 --rows-cache $HOME/coding-agent-rl-lab/work/swe-gym-development-rows.jsonl --output work/held-out.json --trajectories work/held-out.jsonl"
 ```
 
 VM 的 Docker worker 已缓存全部 10 个固定 SWE-Gym 镜像，固定行缓存也留在

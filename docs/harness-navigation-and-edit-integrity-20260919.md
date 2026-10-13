@@ -381,7 +381,7 @@ The rollout host is reached from the VM only, and the two processes that make it
 independently of the instance, which stays up and keeps billing:
 
 ```
-# on the model host (RTX 4090, vLLM 0.11.0), after ssh -p <port> root@connect.bjb1.seetacloud.com
+# on the model host (RTX 4090, vLLM 0.11.0), after ssh -p <port> root@<GPU_SSH_HOST>
 setsid nohup /root/miniconda3/bin/vllm serve /root/autodl-tmp/qwen2.5-coder-14b-modelscope \
   --served-model-name Qwen2.5-Coder-14B-Instruct --host 127.0.0.1 --port 8000 \
   --dtype bfloat16 --max-model-len 32768 --gpu-memory-utilization 0.85 \

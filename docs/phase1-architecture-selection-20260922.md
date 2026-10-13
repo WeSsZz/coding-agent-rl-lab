@@ -1,4 +1,4 @@
-> SUPERSEDED FOR EXECUTION: follow [next-session.md](next-session.md) and manifests/route-v2-model.json. Historical Qwen3 defaults, automatic model cleanup and untimed paid setup below must NOT be executed.
+> SUPERSEDED FOR EXECUTION: follow [swegym-openhands-rl-route.md](swegym-openhands-rl-route.md) and manifests/route-v2-model.json. Historical Qwen3 defaults, automatic model cleanup and untimed paid setup below must NOT be executed.
 
 # 阶段 1：训练架构选型（2026-09-22）
 
@@ -154,7 +154,7 @@ recipe/swe_agent/{swe_agent_loop.py, model_proxy.py, subprocess_runner.py,
 | veRL 依赖（该 tag 的 `pyproject.toml`） | `torch==2.11.0` / `torchvision==0.26.0` / `torchaudio==2.11.0`、CUDA **cu130**、`vllm==0.24.0`、`sglang==0.5.12`、`transformers==5.9.0`、`ray[default]>=2.41.0`、`tensordict>=0.8.0,<=0.10.0,!=0.9.0`、`flash-attn==2.8.3`、python `>=3.10,<3.13` | 同上 |
 | `recipe/swe_agent`（只作参考） | submodule gitlink `e7f889574b8301cc0f0fc1d57c6d67f31ffeb689`；其中 `REQUIRED_VERL.txt` 另指 `verl@bcb638649a50e58494a8ddd92085ad1174f674b8`（main，torch 2.13.0 / vllm 0.29.0 / transformers 5.12.1） | 该目录的 `README.md`、`REQUIRED_VERL.txt` |
 | 学生模型 | `Qwen/Qwen3-8B`，non-thinking，LoRA（`target_modules=all-linear`） | 本项目决策 |
-| Docker worker | 保留本项目实现；VM `wesz@192.168.137.130`，Docker 29.7.2，8 vCPU / 5 GB RAM / 75 GB 空闲 | 本次实测 |
+| Docker worker | 保留本项目实现；VM `<VM_USER>@<VM_HOST>`，Docker 29.7.2，8 vCPU / 5 GB RAM / 75 GB 空闲 | 本次实测 |
 
 > **注意版本冲突**：`recipe/swe_agent` 的 `REQUIRED_VERL.txt` 要求的 veRL commit 与 v0.9.1 的
 > gitlink **不是同一个**。如果将来采用那个 recipe，必须整包按它的 commit 对齐；

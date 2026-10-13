@@ -98,7 +98,7 @@
     "version_pin": "5.0",
     "image_convention": "xingyaoww/sweb.eval.x86_64.{instance_id with __ replaced by _s_}:latest",
     "pytest_argv_form": "/opt/miniconda3/envs/testbed/bin/pytest -n0 -rA -- <FAIL_TO_PASS...> <PASS_TO_PASS...>",
-    "worker_host": "wesz@192.168.137.130 (Ubuntu, Docker 29.7.2, no GPU)",
+    "worker_host": "<VM_USER>@<VM_HOST> (Ubuntu, Docker 29.7.2, no GPU)",
     "images_cached_on_worker": 10,
     "image_size_bytes_each": 4230000000,
     "pinned_tasks": [

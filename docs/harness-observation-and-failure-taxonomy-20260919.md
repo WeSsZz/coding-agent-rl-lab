@@ -73,7 +73,7 @@ at prompt text.
 ## Validation
 
 - Windows, Python 3.12.7: 217 passed, 1 skipped (the guarded Docker integration test).
-- Ubuntu VM (`wesz@192.168.137.130`, Python 3.14.4), isolated `/tmp` copy of the current source:
+- Ubuntu VM (`<VM_USER>@<VM_HOST>`, Python 3.14.4), isolated `/tmp` copy of the current source:
   217 passed, 1 skipped.
 - Ubuntu VM real Docker integration test against the cached
   `xingyaoww/sweb.eval.x86_64.getmoto_s_moto-7365:latest` base image: passed. The test now also

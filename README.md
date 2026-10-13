@@ -8,7 +8,7 @@
 
 旧 `coding_agent_rl_lab.grpo_train` 使用自定义 Docker worker，不属于当前路线；入口默认拒绝执行，只能设置 `CODING_AGENT_ALLOW_LEGACY_GRPO=1` 用于历史复现。包级 `coding-agent-rl smoke/evaluate` 同样是旧路线，只有设置 `CODING_AGENT_ALLOW_LEGACY_ROUTE=1` 才能运行。不要把旧数据、协议或权重迁移到新训练器。
 
-当前进度、运行约束和待办以 [`docs/swegym-openhands-rl-route.md`](docs/swegym-openhands-rl-route.md) 和 [`docs/qwen3-gpu-handoff.md`](docs/qwen3-gpu-handoff.md) 为准。以下旧路线文档和命令暂时保留，均不得解释为当前主线状态。
+当前进度、运行约束和待办以 [`docs/swegym-openhands-rl-route.md`](docs/swegym-openhands-rl-route.md) 为准。以下旧路线文档和命令暂时保留，均不得解释为当前主线状态。
 
 <!-- LEGACY-SWE-GYM-GRPO-ROUTE: 内容从此处起仅供旧路线历史复现；当前任务先阅读 docs/swegym-openhands-rl-route.md。 -->
 
@@ -83,7 +83,7 @@ pwsh -File scripts/sync_and_validate_vm.ps1 -DockerIntegration
 
 ```powershell
 pwsh -File scripts/sync_and_validate_vm.ps1 -TimeoutSeconds 7200 -RemoteCommand `
-  "PYTHONPATH=src python3 -m coding_agent_rl_lab.swe_gym_rollout --model '<served-model-id>' --api-base http://127.0.0.1:8000/v1 --task-set held-out --repetitions 4 --context-window-tokens 32768 --rows-cache /home/wesz/coding-agent-rl-lab/work/swe-gym-development-rows.jsonl --output work/held-out.json --trajectories work/held-out.jsonl"
+  "PYTHONPATH=src python3 -m coding_agent_rl_lab.swe_gym_rollout --model '<served-model-id>' --api-base http://127.0.0.1:8000/v1 --task-set held-out --repetitions 4 --context-window-tokens 32768 --rows-cache $HOME/coding-agent-rl-lab/work/swe-gym-development-rows.jsonl --output work/held-out.json --trajectories work/held-out.jsonl"
 ```
 
 VM 的 Docker worker 已缓存全部 10 个固定 SWE-Gym 镜像，固定行缓存也留在

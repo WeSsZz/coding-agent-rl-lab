@@ -21,9 +21,9 @@ SFT 完成 16/16 条；GRPO 完成前三个 train 任务的 6/16 条，第 4 题
 
 ### 下次恢复
 
-1. 沿用 Windows 私钥 `C:\Users\Junwe\.ssh\id_ed25519_codex_vm` 连接 `wesz@192.168.137.130`；
-   Ubuntu 用 `/home/wesz/.ssh/id_ed25519_autodl` 连接当前 AutoDL
-   `root@connect.bjb1.seetacloud.com:18235`，如实例更新则替换地址和端口。
+1. 沿用 Windows 私钥 `<USER_HOME>\.ssh\id_ed25519_codex_vm` 连接 `<VM_USER>@<VM_HOST>`；
+   Ubuntu 用 `$HOME/.ssh/id_ed25519_autodl` 连接当前 AutoDL
+   `root@<GPU_SSH_HOST>:18235`，如实例更新则替换地址和端口。
 2. 在 Ubuntu 重新启动 9011 worker，使用下文固定的八个任务和原 token 文件；
    `work/direction_tunnel.py` 为带实际心跳的反向隧道脚本，先验证 GPU 端 HTTP 可达。
 3. AutoDL 执行 `bash /root/autodl-tmp/coding-agent-rl-lab/work/run_direction_check.sh`。
